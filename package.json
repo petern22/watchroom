@@ -33,6 +33,8 @@
     ],
     "mac": {
       "category": "public.app-category.entertainment",
+      "identity": "-",
+      "hardenedRuntime": false,
       "target": [
         "dmg"
       ],
