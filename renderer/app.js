@@ -567,7 +567,9 @@ function toggleFullscreen() {
   if (document.fullscreenElement) {
     document.exitFullscreen().catch(() => {});
   } else {
-    $('stage').requestFullscreen().catch(() => toast('Full screen is not available right now.', true));
+    $('stage').requestFullscreen().catch((err) => {
+      toast(`Full screen is not available right now (${err?.message || err?.name || 'unknown reason'}).`, true);
+    });
   }
 }
 

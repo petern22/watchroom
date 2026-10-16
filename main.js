@@ -128,11 +128,11 @@ app.whenReady().then(() => {
   );
 
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(['media', 'display-capture', 'notifications'].includes(permission));
+    callback(['media', 'display-capture', 'notifications', 'fullscreen'].includes(permission));
   });
 
   session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
-    ['media', 'display-capture'].includes(permission),
+    ['media', 'display-capture', 'fullscreen'].includes(permission),
   );
 
   registerIpc();
