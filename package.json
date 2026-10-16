@@ -5,8 +5,8 @@
   "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
   "private": true,
   "watchroomUpdates": {
-    "owner": "",
-    "repo": ""
+    "owner": "petern22",
+    "repo": "watchroom"
   },
   "main": "main.js",
   "scripts": {
