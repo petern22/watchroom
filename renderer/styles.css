@@ -1343,9 +1343,14 @@ input[type='text']:focus {
 }
 
 .stage.show-controls .player,
-.stage:hover .player {
+.stage:not(:fullscreen):hover .player {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* Full screen: the bar and the cursor hide when the mouse is still, and come back on movement. */
+.stage:fullscreen:not(.show-controls) {
+  cursor: none;
 }
 
 .player-info {

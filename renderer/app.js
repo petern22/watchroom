@@ -771,6 +771,7 @@ function init() {
     }
   });
   $('fullscreen-btn').addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', showPlayerControls);
   $('pip-btn').addEventListener('click', togglePopOut);
   $('lowdelay-toggle').addEventListener('change', () => {
     if (state.session?.me.sharing) {
