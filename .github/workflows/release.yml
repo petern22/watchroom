@@ -1,0 +1,68 @@
+name: Release
+
+# Builds the macOS and Windows installers on GitHub's machines and attaches them to the release.
+# Trigger: push a version tag (v1.0.2), or run it by hand for an existing tag.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build, for example v1.0.1'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check the tag matches package.json
+        shell: bash
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          VERSION="$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "Tag $TAG does not match package.json version $VERSION. Bump the version first."
+            exit 1
+          fi
+
+      - name: Build macOS installer
+        if: runner.os == 'macOS'
+        run: npm run dist -- --publish never
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        run: npm run dist:win -- --publish never
+
+      - name: Attach installers to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          gh release create "$TAG" --title "Watchroom ${TAG#v}" --notes "Automatic build for $TAG." >/dev/null 2>&1 || true
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            gh release upload "$TAG" release/*.dmg --clobber
+          else
+            gh release upload "$TAG" release/*.exe --clobber
+          fi
