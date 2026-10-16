@@ -1,0 +1,58 @@
+{
+  "name": "watchroom",
+  "productName": "Watchroom",
+  "version": "1.0.0",
+  "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
+  "private": true,
+  "watchroomUpdates": {
+    "owner": "",
+    "repo": ""
+  },
+  "main": "main.js",
+  "scripts": {
+    "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --mac",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "build": {
+    "appId": "local.watchroom",
+    "productName": "Watchroom",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "icon": "build/icon.png",
+    "files": [
+      "main.js",
+      "preload.js",
+      "updates.js",
+      "renderer/index.html",
+      "renderer/styles.css",
+      "renderer/bundle.js"
+    ],
+    "mac": {
+      "category": "public.app-category.entertainment",
+      "target": [
+        "dmg"
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Watchroom uses your microphone so people in the room can hear you.",
+        "NSScreenCaptureUsageDescription": "Watchroom shares the screen or window you choose with the people in your room."
+      }
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "dependencies": {
+    "trystero": "^0.26.0"
+  },
+  "devDependencies": {
+    "electron": "^44.8.0",
+    "electron-builder": "^26.15.3",
+    "esbuild": "^0.28.2"
+  }
+}

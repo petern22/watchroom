@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' wss: https:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Watchroom</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app" id="app" data-view="home">
+      <header class="topbar">
+        <div class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect x="2" y="2" width="28" height="28" rx="3" class="mark-body" />
+            <path d="M2 16H30" class="mark-seam" />
+            <rect x="7" y="8" width="18" height="2" class="mark-slot" />
+            <circle cx="25.5" cy="23.5" r="2" class="mark-lamp" />
+          </svg>
+          <span class="brand-name">Watchroom</span>
+        </div>
+
+        <div class="room-id" id="room-id" hidden>
+          <span class="label">Room</span>
+          <div class="flapline" id="room-code" data-ch="34" data-cw="22" aria-label="Room code"></div>
+          <button class="chip" id="copy-code" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M8 8h11v12H8z" />
+              <path d="M5 16V4h11" />
+            </svg>
+            <span id="copy-label">Copy code</span>
+          </button>
+        </div>
+
+        <button class="chip update-chip" id="update-chip" type="button" aria-live="polite">
+          <span id="update-label">Check for updates</span>
+        </button>
+
+        <div class="status" id="status" role="status">
+          <span class="lamp" id="status-lamp" aria-hidden="true"></span>
+          <span id="status-text">Ready</span>
+        </div>
+      </header>
+
+      <main class="home" id="home">
+        <section class="home-copy">
+          <div class="flapline wordmark-a" id="wordmark-a" data-ch="104" data-cw="66" aria-label="Watch"></div>
+          <div class="flapline wordmark-b" id="wordmark-b" data-ch="60" data-cw="38" aria-label="together"></div>
+          <p class="lede">
+            Put a movie, a show or a game on your screen and let the people you're with watch it live.
+            Talk and chat while it plays. Nothing to pay for, nothing to sign up for.
+          </p>
+          <dl class="notes">
+            <div>
+              <dt>Works with</dt>
+              <dd>Stremio, browser tabs, local files, YouTube, Jellyfin, Plex, games and any window you can see.</dd>
+            </div>
+            <div>
+              <dt>Shows black</dt>
+              <dd>Netflix, Disney+ and other DRM-protected streams. Their frames are blacked out in any screen share.</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="ticket" aria-label="Start or join a room">
+          <label class="field">
+            <span class="field-label">Your name</span>
+            <input id="name" type="text" maxlength="24" autocomplete="off" spellcheck="false" placeholder="How the others see you" />
+          </label>
+
+          <button class="btn primary wide" id="create-room" type="button">
+            <span>Start a room</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+          </button>
+
+          <div class="stub" aria-hidden="true"><span></span></div>
+
+          <form class="join" id="join-form" novalidate>
+            <span class="field-label" id="code-label">Join with a code</span>
+            <div class="code-inputs" role="group" aria-labelledby="code-label" id="code-inputs"></div>
+            <button class="btn wide" type="submit">
+              <span>Join room</span>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" /></svg>
+            </button>
+          </form>
+
+          <p class="problem" id="home-error" role="alert" hidden></p>
+        </section>
+      </main>
+
+      <main class="room" id="room" hidden>
+        <section class="stage-col">
+          <div class="stage-head">
+            <div class="now">
+              <span class="label">Now showing</span>
+              <div class="flapline" id="now-title" data-ch="30" data-cw="20" aria-live="polite"></div>
+            </div>
+            <div class="clock-wrap">
+              <span class="label">On air</span>
+              <div class="flapline" id="clock" data-ch="26" data-cw="16" aria-label="Time on air"></div>
+            </div>
+          </div>
+
+          <div class="stage" id="stage">
+            <video id="screen" class="screen" autoplay playsinline></video>
+
+            <div class="player" id="player" hidden>
+              <div class="player-head">
+                <div class="player-live">
+                  <span class="lamp is-live" aria-hidden="true"></span>
+                  <span class="player-title" id="player-title">Live</span>
+                </div>
+                <p class="player-status" id="player-status" aria-live="polite">Measuring the connection</p>
+                <button class="chip" id="details-toggle" type="button" aria-expanded="false" aria-controls="player-details">Details</button>
+              </div>
+              <div class="meters">
+                <div class="meter" id="meter-speed">
+                  <span class="meter-name">Speed</span>
+                  <span class="meter-value" id="meter-speed-value">Measuring</span>
+                  <span class="segments" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                </div>
+                <div class="meter" id="meter-smooth">
+                  <span class="meter-name">Smoothness</span>
+                  <span class="meter-value" id="meter-smooth-value">Measuring</span>
+                  <span class="segments" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                </div>
+                <div class="meter" id="meter-delay">
+                  <span class="meter-name">Delay</span>
+                  <span class="meter-value" id="meter-delay-value">Measuring</span>
+                  <span class="segments" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+                </div>
+                <div class="meter" id="meter-picture">
+                  <span class="meter-name">Picture</span>
+                  <span class="meter-value" id="meter-picture-value">Waiting</span>
+                </div>
+              </div>
+              <dl class="player-details" id="player-details" hidden>
+                <div><dt>Resolution</dt><dd id="d-res">—</dd></div>
+                <div><dt>Frame rate</dt><dd id="d-fps">—</dd></div>
+                <div><dt>Downloading</dt><dd id="d-used">—</dd></div>
+                <div><dt>Spare download speed</dt><dd id="d-avail">—</dd></div>
+                <div><dt>Packets lost</dt><dd id="d-loss">—</dd></div>
+                <div><dt>Buffer</dt><dd id="d-buffer">—</dd></div>
+                <div><dt>Round trip</dt><dd id="d-rtt">—</dd></div>
+              </dl>
+              <div class="player-controls">
+                <button class="player-btn" id="mute-btn" type="button" aria-label="Mute" aria-pressed="false">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 9h4l5-4v14l-5-4H4z" />
+                    <path class="sound-on" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" />
+                    <path class="sound-off" d="M16 9l5 6M21 9l-5 6" />
+                  </svg>
+                </button>
+                <input class="volume" id="volume" type="range" min="0" max="100" value="80" aria-label="Volume" />
+                <button class="player-btn" id="pip-btn" type="button" aria-label="Pop out into a small window">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="14" rx="1.5" />
+                    <rect x="11" y="11" width="8" height="6" />
+                  </svg>
+                </button>
+                <button class="player-btn" id="fullscreen-btn" type="button" aria-label="Full screen">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="stage-empty" id="stage-empty">
+              <div class="flapline" id="empty-line" data-ch="44" data-cw="28"></div>
+              <p id="empty-text"></p>
+              <dl class="send-panel" id="send-panel" hidden>
+                <div><dt>Sending</dt><dd id="s-picture">—</dd></div>
+                <div><dt>Upload used</dt><dd id="s-upload">—</dd></div>
+                <div><dt>Spare upload</dt><dd id="s-avail">—</dd></div>
+                <div><dt>Round trip</dt><dd id="s-rtt">—</dd></div>
+                <div><dt>Limited by</dt><dd id="s-limit">—</dd></div>
+                <div><dt>Viewers</dt><dd id="s-viewers">—</dd></div>
+              </dl>
+            </div>
+
+          </div>
+
+          <nav class="dock" aria-label="Room controls">
+            <button class="key" id="mic-btn" type="button" aria-pressed="false">
+              <span class="key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3" />
+                  <path class="slash" d="M4 4l16 16" />
+                </svg>
+              </span>
+              <span class="key-label" id="mic-label">Mic off</span>
+            </button>
+
+            <button class="key" id="share-btn" type="button">
+              <span class="key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="4" width="18" height="12" rx="1.5" />
+                  <path d="M8 20h8M12 16v4" />
+                  <path class="share-arrow" d="M12 12V6.5M9.5 9l2.5-2.5L14.5 9" />
+                </svg>
+              </span>
+              <span class="key-label" id="share-label">Share screen</span>
+            </button>
+
+            <button class="key" id="chat-btn" type="button" aria-controls="panel-chat">
+              <span class="key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M4 5h16v11h-9l-4.5 3.5V16H4z" />
+                </svg>
+                <span class="badge flapline" id="unread" data-ch="18" data-cw="13" aria-label="Unread messages" hidden></span>
+              </span>
+              <span class="key-label">Chat</span>
+            </button>
+
+            <button class="key leave" id="leave-btn" type="button">
+              <span class="key-face">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="M13 4H5v16h8" />
+                  <path d="M10 12h10M16.5 8.5 20 12l-3.5 3.5" />
+                </svg>
+              </span>
+              <span class="key-label">Leave</span>
+            </button>
+          </nav>
+        </section>
+
+        <aside class="side" aria-label="People and chat">
+          <div class="tabs" role="tablist">
+            <button class="tab" id="tab-people" role="tab" aria-selected="true" aria-controls="panel-people">
+              People <span class="count" id="count">1</span>
+            </button>
+            <button class="tab" id="tab-chat" role="tab" aria-selected="false" aria-controls="panel-chat">
+              Chat <span class="dot" id="tab-dot" hidden></span>
+            </button>
+          </div>
+
+          <section class="panel" id="panel-people" role="tabpanel" aria-labelledby="tab-people">
+            <div class="board-head" aria-hidden="true">
+              <span>Name</span>
+              <span>Status</span>
+            </div>
+            <ul class="board" id="people"></ul>
+          </section>
+
+          <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
+            <ol class="messages" id="messages" aria-live="polite"></ol>
+            <form class="composer" id="chat-form" autocomplete="off">
+              <label class="sr-only" for="chat-input">Message</label>
+              <input id="chat-input" type="text" maxlength="500" placeholder="Say something to the room" />
+              <button class="btn primary" type="submit">Send</button>
+            </form>
+          </section>
+        </aside>
+      </main>
+
+      <div class="sheet" id="picker" hidden>
+        <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="picker-title">
+          <header class="sheet-head">
+            <div>
+              <h2 class="sheet-title" id="picker-title">What do you want to show?</h2>
+              <p class="sheet-sub">Pick a screen or a window. Everyone in the room sees it live.</p>
+            </div>
+            <button class="icon-btn" id="picker-close" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </header>
+
+          <div class="notice" id="perm-notice" role="alert" hidden>
+            <p>Screen Recording is off for Watchroom. Turn it on in System Settings, then restart the app.</p>
+            <button class="btn" id="open-settings" type="button">Open settings</button>
+          </div>
+
+          <div class="seg" role="tablist" aria-label="Source type">
+            <button class="seg-btn" role="tab" data-kind="screen" aria-selected="true">Screens</button>
+            <button class="seg-btn" role="tab" data-kind="window" aria-selected="false">Windows</button>
+          </div>
+
+          <div class="sources" id="sources" role="listbox" aria-label="Sources"></div>
+          <p class="sources-empty" id="sources-empty" hidden>Nothing to show here yet.</p>
+
+          <div class="options">
+            <div class="seg" role="radiogroup" aria-label="Resolution">
+              <button class="seg-btn" role="radio" data-quality="720" aria-checked="false">720p</button>
+              <button class="seg-btn" role="radio" data-quality="1080" aria-checked="true">1080p</button>
+              <button class="seg-btn" role="radio" data-quality="1440" aria-checked="false">1440p</button>
+              <button class="seg-btn" role="radio" data-quality="2160" aria-checked="false">4K</button>
+            </div>
+            <div class="seg" role="radiogroup" aria-label="Frame rate">
+              <button class="seg-btn" role="radio" data-fps="30" aria-checked="true">30 fps</button>
+              <button class="seg-btn" role="radio" data-fps="60" aria-checked="false">60 fps</button>
+            </div>
+            <label class="switch">
+              <input id="audio-toggle" type="checkbox" checked />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Include system sound</span>
+            </label>
+          </div>
+
+          <footer class="sheet-foot">
+            <div class="hint-block">
+              <p class="hint" id="picker-hint">Choose a source to continue.</p>
+              <p class="hint-cost" id="picker-cost"></p>
+            </div>
+            <div class="sheet-actions">
+              <button class="btn ghost" id="picker-cancel" type="button">Cancel</button>
+              <button class="btn primary" id="picker-share" type="button" disabled>Put it on the board</button>
+            </div>
+          </footer>
+        </div>
+      </div>
+
+      <div class="toast" id="toast" role="status" hidden></div>
+    </div>
+
+    <script src="bundle.js"></script>
+  </body>
+</html>
