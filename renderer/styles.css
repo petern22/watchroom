@@ -1342,7 +1342,8 @@ input[type='text']:focus {
   pointer-events: none;
 }
 
-.stage.show-controls .player {
+.stage.show-controls .player,
+.stage:hover .player {
   opacity: 1;
   pointer-events: auto;
 }
