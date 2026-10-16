@@ -640,7 +640,8 @@ input[type='text']:focus {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
+  /* Fill the stage edge to edge by default. The fit button shows the whole picture instead. */
+  object-fit: cover;
   background: #000;
 }
 
@@ -1322,6 +1323,16 @@ input[type='text']:focus {
 
 .stage:fullscreen .screen {
   background: #000;
+}
+
+/* The fit button: show the whole picture with black edges if needed. */
+.stage.show-whole .screen {
+  object-fit: contain;
+}
+
+#fit-btn[aria-pressed='true'] {
+  color: var(--lamp);
+  border-color: var(--lamp);
 }
 
 .player {

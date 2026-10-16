@@ -773,6 +773,11 @@ function init() {
   $('fullscreen-btn').addEventListener('click', toggleFullscreen);
   document.addEventListener('fullscreenchange', showPlayerControls);
   $('pip-btn').addEventListener('click', togglePopOut);
+  $('fit-btn').addEventListener('click', () => {
+    const whole = $('stage').classList.toggle('show-whole');
+    $('fit-btn').setAttribute('aria-pressed', String(whole));
+    $('fit-btn').setAttribute('aria-label', whole ? 'Fill the screen' : 'Show the whole picture');
+  });
   $('lowdelay-toggle').addEventListener('change', () => {
     if (state.session?.me.sharing) {
       state.session.setProfile(state.picker.quality, state.picker.fps, $('lowdelay-toggle').checked);
