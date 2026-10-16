@@ -457,10 +457,11 @@ async function confirmShare() {
   const source = selectedSource();
   if (!source || !state.session) return;
   const audio = $('audio-toggle').checked;
+  const lowDelay = $('lowdelay-toggle').checked;
   const { quality, fps } = state.picker;
   $('picker').hidden = true;
   try {
-    const result = await state.session.startShare({ sourceId: source.id, label: source.name, audio, quality, fps });
+    const result = await state.session.startShare({ sourceId: source.id, label: source.name, audio, quality, fps, lowDelay });
     if (audio && !result.hasAudio) toast('This source has no system sound. Sharing the picture only.');
   } catch (err) {
     toast(describeShareError(err), true);
@@ -731,13 +732,13 @@ function init() {
   for (const btn of document.querySelectorAll('[data-quality]')) {
     btn.addEventListener('click', () => {
       setQuality(btn.dataset.quality);
-      if (state.session?.me.sharing) state.session.setProfile(state.picker.quality, state.picker.fps);
+      if (state.session?.me.sharing) state.session.setProfile(state.picker.quality, state.picker.fps, $('lowdelay-toggle').checked);
     });
   }
   for (const btn of document.querySelectorAll('[data-fps]')) {
     btn.addEventListener('click', () => {
       setFps(Number(btn.dataset.fps));
-      if (state.session?.me.sharing) state.session.setProfile(state.picker.quality, state.picker.fps);
+      if (state.session?.me.sharing) state.session.setProfile(state.picker.quality, state.picker.fps, $('lowdelay-toggle').checked);
     });
   }
 
@@ -771,6 +772,11 @@ function init() {
   });
   $('fullscreen-btn').addEventListener('click', toggleFullscreen);
   $('pip-btn').addEventListener('click', togglePopOut);
+  $('lowdelay-toggle').addEventListener('change', () => {
+    if (state.session?.me.sharing) {
+      state.session.setProfile(state.picker.quality, state.picker.fps, $('lowdelay-toggle').checked);
+    }
+  });
   $('details-toggle').addEventListener('click', () => {
     const open = $('player-details').hidden;
     $('player-details').hidden = !open;

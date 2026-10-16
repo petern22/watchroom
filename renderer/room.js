@@ -93,7 +93,7 @@ export function openRoom(code, name, on) {
   let micStream = null;
   let screenStream = null;
   let screenTrack = null;
-  let profile = normalizeProfile('720', 30);
+  let profile = { ...normalizeProfile('720', 30), lowDelay: false };
   let stageId = null;
   let closed = false;
   // Per viewer: the bitrate cap and resolution scale the sender has settled on.
@@ -141,10 +141,16 @@ export function openRoom(code, name, on) {
     };
   }
 
+  // Lowest-delay mode sends less, so frames never queue behind a full upload.
+  function targetBps() {
+    const base = bitrateFor(profile.quality, profile.fps, peers.size);
+    return profile.lowDelay ? base * 0.6 : base;
+  }
+
   // Applies the target profile and each viewer's settled cap to the senders.
   function applySenderParams() {
     if (!screenTrack) return;
-    const target = bitrateFor(profile.quality, profile.fps, peers.size);
+    const target = targetBps();
     for (const [peerId, pc] of Object.entries(room.getPeers())) {
       const state = sendState.get(peerId) || { cap: target, scale: 1, limit: 'none', stable: 0 };
       sendState.set(peerId, state);
@@ -173,7 +179,7 @@ export function openRoom(code, name, on) {
   // Every few seconds, look at why each viewer's stream is limited and adjust that viewer alone.
   async function adaptSenders() {
     if (!screenTrack) return;
-    const target = bitrateFor(profile.quality, profile.fps, peers.size);
+    const target = targetBps();
     let worst = { limit: 'none', cap: target, scale: 1 };
     let uploadMbps = 0;
     let availableMbps = Infinity;
@@ -204,7 +210,12 @@ export function openRoom(code, name, on) {
       if (pair?.availableOutgoingBitrate) availableMbps = Math.min(availableMbps, pair.availableOutgoingBitrate / 1e6);
       if (pair?.currentRoundTripTime) rttMs = Math.max(rttMs, Math.round(pair.currentRoundTripTime * 1000));
 
-      const limit = outbound.qualityLimitationReason || 'none';
+      const rtt = pair?.currentRoundTripTime ? pair.currentRoundTripTime * 1000 : 0;
+      if (rtt) state.minRtt = Math.min(state.minRtt ?? rtt, rtt);
+      // A round trip that keeps rising means frames are waiting in a queue: that is delay.
+      const queuing = Boolean(rtt && state.minRtt && rtt > state.minRtt + (profile.lowDelay ? 60 : 120));
+      const reported = outbound.qualityLimitationReason || 'none';
+      const limit = reported === 'none' && queuing ? 'bandwidth' : reported;
       state.limit = limit;
       if (limit === 'bandwidth') {
         state.cap = Math.max(MIN_VIDEO_BPS, state.cap * 0.85);
@@ -372,6 +383,8 @@ export function openRoom(code, name, on) {
     pc?.getReceivers().forEach((receiver) => {
       try {
         receiver.playoutDelayHint = 0;
+        // Chromium's newer setting for the same thing: keep the video buffer at its minimum.
+        if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0;
       } catch {
         /* not supported in this browser build; playback still works */
       }
@@ -490,9 +503,9 @@ export function openRoom(code, name, on) {
     return me.mic;
   }
 
-  async function startShare({ sourceId, label, audio, quality, fps }) {
+  async function startShare({ sourceId, label, audio, quality, fps, lowDelay }) {
     if (screenStream) stopShare();
-    profile = normalizeProfile(quality, fps);
+    profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay) };
     sendState.clear();
     await window.watchroom.prepareShare(sourceId, audio);
     let stream;
@@ -570,8 +583,8 @@ export function openRoom(code, name, on) {
     stopShare,
     sendChat,
     leave,
-    setProfile(quality, fps) {
-      profile = normalizeProfile(quality, fps);
+    setProfile(quality, fps, lowDelay = profile.lowDelay) {
+      profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay) };
       sendState.clear();
       if (screenTrack) screenTrack.applyConstraints(captureConstraints()).catch(() => {});
       applySenderParams();
