@@ -154,7 +154,7 @@ export function openRoom(code, name, on) {
     for (const [peerId, pc] of Object.entries(room.getPeers())) {
       const state = sendState.get(peerId) || { cap: target, scale: 1, limit: 'none', stable: 0 };
       sendState.set(peerId, state);
-      state.cap = Math.min(state.cap, target);
+      state.cap = Math.min(state.cap, state.ceiling ?? target);
       for (const sender of pc.getSenders()) {
         if (!sender.track) continue;
         const isScreen = sender.track === screenTrack;
@@ -194,10 +194,12 @@ export function openRoom(code, name, on) {
       sendState.set(peerId, state);
       let outbound = null;
       let pair = null;
+      let remoteInbound = null;
       const report = await sender.getStats().catch(() => null);
       report?.forEach((entry) => {
         if (entry.type === 'outbound-rtp' && entry.kind === 'video') outbound = entry;
         if (entry.type === 'candidate-pair' && entry.nominated) pair = entry;
+        if (entry.type === 'remote-inbound-rtp' && entry.kind === 'video') remoteInbound = entry;
       });
       if (!outbound) continue;
 
@@ -214,9 +216,17 @@ export function openRoom(code, name, on) {
       if (rtt) state.minRtt = Math.min(state.minRtt ?? rtt, rtt);
       // A round trip that keeps rising means frames are waiting in a queue: that is delay.
       const queuing = Boolean(rtt && state.minRtt && rtt > state.minRtt + (profile.lowDelay ? 60 : 120));
+      // A short delay spike is normal on Wi-Fi. Cut quality only when delay stays high, or when packets are really lost.
+      state.queueCount = queuing ? (state.queueCount || 0) + 1 : 0;
+      const lossy = (remoteInbound?.fractionLost || 0) > 0.02;
       const reported = outbound.qualityLimitationReason || 'none';
-      const limit = reported === 'none' && queuing ? 'bandwidth' : reported;
+      const limit = reported === 'none' && (lossy || state.queueCount >= 2) ? 'bandwidth' : reported;
       state.limit = limit;
+      // Room to grow: up to 2.5x the default, but never past this viewer's share of the upload.
+      const shareBps = UPLOAD_BUDGET_BPS / Math.max(1, peers.size);
+      const measured = (pair?.availableOutgoingBitrate || 0) / Math.max(1, peers.size);
+      const growTo = profile.lowDelay ? 1 : 2.5;
+      state.ceiling = Math.max(target, Math.min(target * growTo, shareBps, measured * 0.8));
       if (limit === 'bandwidth') {
         state.cap = Math.max(MIN_VIDEO_BPS, state.cap * 0.85);
         state.stable = 0;
@@ -225,8 +235,8 @@ export function openRoom(code, name, on) {
         state.stable = 0;
       } else {
         state.stable = (state.stable || 0) + 1;
-        if (state.stable >= 3) {
-          state.cap = Math.min(target, state.cap * 1.1);
+        if (state.stable >= 2) {
+          state.cap = Math.min(state.ceiling, state.cap * 1.25);
           state.scale = Math.max(1, state.scale / 1.25);
           state.stable = 0;
         }
