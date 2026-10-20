@@ -4,6 +4,7 @@
   "version": "1.0.2",
   "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
   "private": true,
+  "watchroomTurn": [],
   "watchroomUpdates": {
     "owner": "petern22",
     "repo": "watchroom"
@@ -12,6 +13,7 @@
   "scripts": {
     "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js",
     "start": "npm run build && electron .",
+    "test": "node test/meters.test.mjs && node test/updates.test.mjs",
     "dist": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -23,6 +25,14 @@
       "buildResources": "build"
     },
     "icon": "build/icon.png",
+    "protocols": [
+      {
+        "name": "Watchroom",
+        "schemes": [
+          "watchroom"
+        ]
+      }
+    ],
     "files": [
       "main.js",
       "preload.js",

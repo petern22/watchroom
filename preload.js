@@ -11,4 +11,7 @@ contextBridge.exposeInMainWorld('watchroom', {
   openScreenSettings: () => ipcRenderer.invoke('system:open-screen-settings'),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),
   openUpdate: (url) => ipcRenderer.invoke('updates:open', url),
+  pendingInvite: () => ipcRenderer.invoke('invite:pending'),
+  turnServers: () => ipcRenderer.invoke('config:turn'),
+  onInvite: (callback) => ipcRenderer.on('invite', (_event, code) => callback(code)),
 });

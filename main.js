@@ -9,6 +9,28 @@ let pendingShare = null;
 
 const isMac = process.platform === 'darwin';
 
+// Invite links: watchroom://join/ABC123 opens the app with that room code filled in.
+const INVITE = /^watchroom:\/\/join\/([A-Za-z0-9]{6})\/?$/;
+let pendingInvite = null;
+
+function inviteFrom(args) {
+  const link = args.find((arg) => typeof arg === 'string' && arg.startsWith('watchroom://'));
+  const match = link && link.match(INVITE);
+  return match ? match[1].toUpperCase() : null;
+}
+
+function deliverInvite(code) {
+  if (!code) return;
+  const win = BrowserWindow.getAllWindows()[0];
+  if (!win) {
+    pendingInvite = code;
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.focus();
+  win.webContents.send('invite', code);
+}
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
@@ -104,13 +126,34 @@ function registerIpc() {
     return true;
   });
 
+  // Optional relay servers for networks that block direct connections. Empty until one is set in package.json.
+  ipcMain.handle('config:turn', () => pkg.watchroomTurn || []);
+
+  ipcMain.handle('invite:pending', () => {
+    const code = pendingInvite;
+    pendingInvite = null;
+    return code;
+  });
+
   ipcMain.handle('app:info', () => ({
     version: app.getVersion(),
     platform: process.platform,
   }));
 }
 
+pendingInvite = inviteFrom(process.argv);
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deliverInvite(inviteFrom([url]));
+});
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on('second-instance', (_event, argv) => deliverInvite(inviteFrom(argv)));
+}
+
 app.whenReady().then(() => {
+  app.setAsDefaultProtocolClient('watchroom');
   // Only the renderer's own page may capture, and only the source chosen in the picker.
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {

@@ -78,8 +78,33 @@ function isKind(metadata, kind) {
 // Worst limitation across viewers, for the sender's summary.
 const LIMIT_RANK = { none: 0, other: 1, cpu: 2, bandwidth: 3 };
 
-export function openRoom(code, name, on) {
-  const room = joinRoom({ appId: APP_ID, password: code }, code);
+// H.264 first: most computers compress it in dedicated hardware, which is sharper per bit and uses less processor.
+// Set when each video track is added, so the browser negotiates H.264 from the first offer.
+function preferredCodecs() {
+  const all = RTCRtpSender.getCapabilities('video')?.codecs ?? [];
+  const h264 = all.filter((c) => c.mimeType === 'video/H264' && /profile-level-id=42e01f/.test(c.sdpFmtpLine || ''));
+  return [...h264, ...all.filter((c) => !h264.includes(c))];
+}
+
+class H264PreferringConnection extends RTCPeerConnection {
+  addTrack(track, ...streams) {
+    const sender = super.addTrack(track, ...streams);
+    if (track.kind === 'video') {
+      const transceiver = this.getTransceivers().find((t) => t.sender === sender);
+      try {
+        transceiver?.setCodecPreferences(preferredCodecs());
+      } catch {
+        /* the browser keeps its own order if the preference is refused */
+      }
+    }
+    return sender;
+  }
+}
+
+export function openRoom(code, name, on, options = {}) {
+  const config = { appId: APP_ID, password: code, rtcPolyfill: H264PreferringConnection };
+  if (options.turnConfig?.length) config.turnConfig = options.turnConfig;
+  const room = joinRoom(config, code);
   const helloAction = room.makeAction('hello');
   const stateAction = room.makeAction('state');
   const chatAction = room.makeAction('chat');
@@ -93,7 +118,7 @@ export function openRoom(code, name, on) {
   let micStream = null;
   let screenStream = null;
   let screenTrack = null;
-  let profile = { ...normalizeProfile('720', 30), lowDelay: false };
+  let profile = { ...normalizeProfile('720', 30), lowDelay: false, sharp: false };
   let stageId = null;
   let closed = false;
   // Per viewer: the bitrate cap and resolution scale the sender has settled on.
@@ -152,9 +177,11 @@ export function openRoom(code, name, on) {
     if (!screenTrack) return;
     const target = targetBps();
     for (const [peerId, pc] of Object.entries(room.getPeers())) {
-      const state = sendState.get(peerId) || { cap: target, scale: 1, limit: 'none', stable: 0 };
+      // Start above the default, so a good line reaches full quality quickly. The congestion rule pulls it back if needed.
+      const start = profile.lowDelay ? target : target * 1.5;
+      const state = sendState.get(peerId) || { cap: start, scale: 1, limit: 'none', stable: 0 };
       sendState.set(peerId, state);
-      state.cap = Math.min(state.cap, state.ceiling ?? target);
+      state.cap = Math.min(state.cap, state.ceiling ?? start);
       for (const sender of pc.getSenders()) {
         if (!sender.track) continue;
         const isScreen = sender.track === screenTrack;
@@ -167,7 +194,12 @@ export function openRoom(code, name, on) {
           encoding.maxBitrate = Math.round(state.cap);
           encoding.scaleResolutionDownBy = state.scale;
           // At 60 fps keep the frame rate and let resolution give way when the link is short.
-          params.degradationPreference = profile.fps >= 60 ? 'maintain-framerate' : 'balanced';
+          // Sharper picture keeps the resolution and drops frames instead. Otherwise keep the frame rate at 60 fps.
+          params.degradationPreference = profile.sharp
+            ? 'maintain-resolution'
+            : profile.fps >= 60
+              ? 'maintain-framerate'
+              : 'balanced';
         } else {
           encoding.maxBitrate = AUDIO_BPS;
         }
@@ -186,6 +218,7 @@ export function openRoom(code, name, on) {
     let rttMs = 0;
     let encoderFps = 0;
     let frame = { width: 0, height: 0 };
+    let codecName = '';
     const now = Date.now();
     for (const [peerId, pc] of Object.entries(room.getPeers())) {
       const sender = pc.getSenders().find((s) => s.track === screenTrack);
@@ -209,6 +242,7 @@ export function openRoom(code, name, on) {
       state.sampledAt = now;
       encoderFps = Math.max(encoderFps, Math.round(outbound.framesPerSecond || 0));
       if (outbound.frameWidth) frame = { width: outbound.frameWidth, height: outbound.frameHeight };
+      codecName = report?.get(outbound.codecId)?.mimeType?.replace('video/', '') || codecName;
       if (pair?.availableOutgoingBitrate) availableMbps = Math.min(availableMbps, pair.availableOutgoingBitrate / 1e6);
       if (pair?.currentRoundTripTime) rttMs = Math.max(rttMs, Math.round(pair.currentRoundTripTime * 1000));
 
@@ -258,6 +292,7 @@ export function openRoom(code, name, on) {
       availableMbps: Number.isFinite(availableMbps) ? Math.round(availableMbps * 10) / 10 : 0,
       rttMs,
       targetMbps: Math.round(target / 1e5) / 10,
+      codec: codecName,
     });
   }
 
@@ -513,9 +548,9 @@ export function openRoom(code, name, on) {
     return me.mic;
   }
 
-  async function startShare({ sourceId, label, audio, quality, fps, lowDelay }) {
+  async function startShare({ sourceId, label, audio, quality, fps, lowDelay, sharp }) {
     if (screenStream) stopShare();
-    profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay) };
+    profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay), sharp: Boolean(sharp) };
     sendState.clear();
     await window.watchroom.prepareShare(sourceId, audio);
     let stream;
@@ -593,8 +628,8 @@ export function openRoom(code, name, on) {
     stopShare,
     sendChat,
     leave,
-    setProfile(quality, fps, lowDelay = profile.lowDelay) {
-      profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay) };
+    setProfile(quality, fps, lowDelay = profile.lowDelay, sharp = profile.sharp) {
+      profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay), sharp: Boolean(sharp) };
       sendState.clear();
       if (screenTrack) screenTrack.applyConstraints(captureConstraints()).catch(() => {});
       applySenderParams();

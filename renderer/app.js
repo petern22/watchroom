@@ -32,6 +32,7 @@ const state = {
   picker: { kind: 'screen', quality: '1080', fps: 30, sourceId: null, sources: [] },
   sendSummary: null,
   controlsTimer: null,
+  ducked: false,
 };
 
 function el(tag, className, text) {
@@ -53,7 +54,25 @@ function formatElapsed(ms) {
   return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':');
 }
 
-// ---------- persistence (display name only, per viewer) ----------
+// ---------- persistence (per viewer: name and the last share choices) ----------
+
+const SHARE_KEY = 'watchroom.share';
+
+function loadShareSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SHARE_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveShareSettings(settings) {
+  try {
+    localStorage.setItem(SHARE_KEY, JSON.stringify(settings));
+  } catch {
+    /* storage can be unavailable; the choices simply are not remembered */
+  }
+}
 
 function loadName() {
   try {
@@ -190,7 +209,7 @@ function startRoom(code) {
   $('people').replaceChildren();
   updateStage();
 
-  const session = openRoom(code, name, handlers);
+  const session = openRoom(code, name, handlers, { turnConfig: state.turn });
   state.session = session;
   session.startMic();
 }
@@ -458,10 +477,12 @@ async function confirmShare() {
   if (!source || !state.session) return;
   const audio = $('audio-toggle').checked;
   const lowDelay = $('lowdelay-toggle').checked;
+  const sharp = $('sharp-toggle').checked;
   const { quality, fps } = state.picker;
+  saveShareSettings({ quality, fps, audio, lowDelay, sharp });
   $('picker').hidden = true;
   try {
-    const result = await state.session.startShare({ sourceId: source.id, label: source.name, audio, quality, fps, lowDelay });
+    const result = await state.session.startShare({ sourceId: source.id, label: source.name, audio, quality, fps, lowDelay, sharp });
     if (audio && !result.hasAudio) toast('This source has no system sound. Sharing the picture only.');
   } catch (err) {
     toast(describeShareError(err), true);
@@ -476,6 +497,11 @@ const handlers = {
     renderPeers(list);
     updateDock();
     updateStage();
+    const talking = list.some((p) => !p.you && p.speaking);
+    if (talking !== state.ducked) {
+      state.ducked = talking;
+      applyVolume();
+    }
   },
   chat: addChat,
   system: addSystem,
@@ -545,6 +571,7 @@ function renderSendPanel(s) {
   $('s-avail').textContent = s.availableMbps ? `${s.availableMbps} Mbps` : 'Measuring';
   $('s-rtt').textContent = s.rttMs ? `${s.rttMs} ms` : 'Measuring';
   $('s-limit').textContent = limitWords(s.limit);
+  $('s-codec').textContent = s.codec ? (s.codec === 'H264' ? 'H.264' : s.codec) : 'Measuring';
   $('s-viewers').textContent = String(s.viewers);
 }
 
@@ -553,6 +580,12 @@ function showPlayerControls() {
   stage.classList.add('show-controls');
   clearTimeout(state.controlsTimer);
   state.controlsTimer = setTimeout(() => stage.classList.remove('show-controls'), 2500);
+}
+
+// The movie's volume follows the slider, and drops to 30% while someone in the room is talking.
+function applyVolume() {
+  const base = Number($('volume').value) / 100;
+  $('screen').volume = state.ducked ? base * 0.3 : base;
 }
 
 function setMuted(muted) {
@@ -674,6 +707,22 @@ function onUpdateChip() {
   runUpdateCheck();
 }
 
+// ---------- invite links ----------
+
+// A watchroom:// link fills in the code. The room is joined once there is a name to show.
+function handleInvite(code) {
+  if (!code || !CODE_PATTERN.test(code)) return;
+  state.codeInputs.forEach((input, i) => {
+    input.value = code[i];
+  });
+  if (readName()) {
+    startRoom(code);
+  } else {
+    showHomeError('Enter your name, then press Start a room or Join room.');
+    $('name').focus();
+  }
+}
+
 // ---------- boot ----------
 
 function init() {
@@ -750,6 +799,11 @@ function init() {
   });
 
   $('update-chip').addEventListener('click', onUpdateChip);
+  window.watchroom.turnServers().then((list) => {
+    state.turn = Array.isArray(list) ? list : [];
+  });
+  window.watchroom.pendingInvite().then(handleInvite);
+  window.watchroom.onInvite(handleInvite);
   window.watchroom.appInfo().then((info) => {
     state.version = info.version;
     setTimeout(runUpdateCheck, 2000);
@@ -759,7 +813,7 @@ function init() {
   $('screen').volume = 0.8;
   $('volume').addEventListener('input', (event) => {
     const value = Number(event.target.value);
-    $('screen').volume = value / 100;
+    applyVolume();
     setMuted(value === 0);
   });
   $('mute-btn').addEventListener('click', () => {
@@ -777,6 +831,11 @@ function init() {
     const whole = $('stage').classList.toggle('show-whole');
     $('fit-btn').setAttribute('aria-pressed', String(whole));
     $('fit-btn').setAttribute('aria-label', whole ? 'Fill the screen' : 'Show the whole picture');
+  });
+  $('sharp-toggle').addEventListener('change', () => {
+    if (state.session?.me.sharing) {
+      state.session.setProfile(state.picker.quality, state.picker.fps, $('lowdelay-toggle').checked, $('sharp-toggle').checked);
+    }
   });
   $('lowdelay-toggle').addEventListener('change', () => {
     if (state.session?.me.sharing) {
@@ -801,6 +860,13 @@ function init() {
   window.addEventListener('beforeunload', () => {
     if (state.session) state.session.leave().catch(() => {});
   });
+
+  const saved = loadShareSettings();
+  if (['720', '1080', '1440', '2160'].includes(saved.quality)) setQuality(saved.quality);
+  if (saved.fps === 30 || saved.fps === 60) setFps(saved.fps);
+  if (typeof saved.audio === 'boolean') $('audio-toggle').checked = saved.audio;
+  if (typeof saved.lowDelay === 'boolean') $('lowdelay-toggle').checked = saved.lowDelay;
+  if (typeof saved.sharp === 'boolean') $('sharp-toggle').checked = saved.sharp;
 
   setView('home');
   if ($('name').value) state.codeInputs[0].focus();
