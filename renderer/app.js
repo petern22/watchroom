@@ -187,7 +187,7 @@ function readName() {
   return $('name').value.trim().slice(0, 24);
 }
 
-function startRoom(code) {
+async function startRoom(code) {
   const name = readName();
   if (!name) {
     showHomeError('Add your name first, so the others know who just walked in.');
@@ -196,6 +196,7 @@ function startRoom(code) {
   }
   hideHomeError();
   saveName(name);
+  const turn = await window.watchroom.turnServers();
   if (state.session) leaveRoom();
 
   state.code = code;
@@ -209,7 +210,7 @@ function startRoom(code) {
   $('people').replaceChildren();
   updateStage();
 
-  const session = openRoom(code, name, handlers, { turnConfig: state.turn });
+  const session = openRoom(code, name, handlers, { turnConfig: turn });
   state.session = session;
   session.startMic();
 }
@@ -799,9 +800,6 @@ function init() {
   });
 
   $('update-chip').addEventListener('click', onUpdateChip);
-  window.watchroom.turnServers().then((list) => {
-    state.turn = Array.isArray(list) ? list : [];
-  });
   window.watchroom.pendingInvite().then(handleInvite);
   window.watchroom.onInvite(handleInvite);
   window.watchroom.appInfo().then((info) => {

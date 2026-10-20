@@ -127,7 +127,21 @@ function registerIpc() {
   });
 
   // Optional relay servers for networks that block direct connections. Empty until one is set in package.json.
-  ipcMain.handle('config:turn', () => pkg.watchroomTurn || []);
+  // Short-lived relay logins from the Cloudflare Worker, fetched fresh for each room. Falls back to any static list.
+  ipcMain.handle('config:turn', async () => {
+    if (pkg.watchroomTurnUrl) {
+      try {
+        const response = await fetch(pkg.watchroomTurnUrl);
+        if (response.ok) {
+          const data = await response.json();
+          if (Array.isArray(data.iceServers)) return data.iceServers;
+        }
+      } catch {
+        /* no connection to the relay service; the app still works on direct connections */
+      }
+    }
+    return pkg.watchroomTurn || [];
+  });
 
   ipcMain.handle('invite:pending', () => {
     const code = pendingInvite;

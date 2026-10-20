@@ -4,6 +4,7 @@
   "version": "1.0.2",
   "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
   "private": true,
+  "watchroomTurnUrl": "https://watchroom-turn.peterndrio.workers.dev",
   "watchroomTurn": [],
   "watchroomUpdates": {
     "owner": "petern22",
