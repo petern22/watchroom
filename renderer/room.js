@@ -104,6 +104,7 @@ class H264PreferringConnection extends RTCPeerConnection {
 export function openRoom(code, name, on, options = {}) {
   const config = { appId: APP_ID, password: code, rtcPolyfill: H264PreferringConnection };
   if (options.turnConfig?.length) config.turnConfig = options.turnConfig;
+  if (options.forceRelay) config.rtcConfig = { iceTransportPolicy: 'relay' };
   const room = joinRoom(config, code);
   const helloAction = room.makeAction('hello');
   const stateAction = room.makeAction('state');
@@ -338,7 +339,11 @@ export function openRoom(code, name, on, options = {}) {
         ? Math.round((inbound.jitterBufferDelay / inbound.jitterBufferEmittedCount) * 1000)
         : 0;
       const rttMs = Math.round((pair?.currentRoundTripTime || 0) * 1000);
+      // The route: a relay candidate means the call goes through Cloudflare, anything else is a direct connection.
+      const local = pair ? report?.get(pair.localCandidateId) : null;
+      const route = local ? (local.candidateType === 'relay' ? 'relay' : 'direct') : '';
       on.quality?.({
+        route,
         width: inbound.frameWidth || 0,
         height: inbound.frameHeight || 0,
         fps: Math.round(inbound.framesPerSecond || 0),

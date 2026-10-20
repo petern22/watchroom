@@ -197,6 +197,7 @@ async function startRoom(code) {
   hideHomeError();
   saveName(name);
   const turn = await window.watchroom.turnServers();
+  const forceRelay = await window.watchroom.forceRelay();
   if (state.session) leaveRoom();
 
   state.code = code;
@@ -210,7 +211,7 @@ async function startRoom(code) {
   $('people').replaceChildren();
   updateStage();
 
-  const session = openRoom(code, name, handlers, { turnConfig: turn });
+  const session = openRoom(code, name, handlers, { turnConfig: turn, forceRelay });
   state.session = session;
   session.startMic();
 }
@@ -558,6 +559,7 @@ function renderPlayer(info) {
   $('d-loss').textContent = `${info.lossPct}%`;
   $('d-buffer').textContent = `${info.bufferMs} ms`;
   $('d-rtt').textContent = info.rttMs ? `${info.rttMs} ms` : 'Measuring';
+  $('d-route').textContent = info.route === 'relay' ? 'Relayed (Cloudflare)' : info.route === 'direct' ? 'Direct' : 'Measuring';
 }
 
 // The sharer's own view: what viewers are receiving and what limits it.

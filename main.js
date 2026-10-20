@@ -143,6 +143,9 @@ function registerIpc() {
     return pkg.watchroomTurn || [];
   });
 
+  // Test switch only: WATCHROOM_FORCE_RELAY=1 sends every call through the relay, to prove the relay works.
+  ipcMain.handle('config:force-relay', () => process.env.WATCHROOM_FORCE_RELAY === '1');
+
   ipcMain.handle('invite:pending', () => {
     const code = pendingInvite;
     pendingInvite = null;

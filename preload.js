@@ -13,5 +13,6 @@ contextBridge.exposeInMainWorld('watchroom', {
   openUpdate: (url) => ipcRenderer.invoke('updates:open', url),
   pendingInvite: () => ipcRenderer.invoke('invite:pending'),
   turnServers: () => ipcRenderer.invoke('config:turn'),
+  forceRelay: () => ipcRenderer.invoke('config:force-relay'),
   onInvite: (callback) => ipcRenderer.on('invite', (_event, code) => callback(code)),
 });
