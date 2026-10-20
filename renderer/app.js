@@ -851,10 +851,15 @@ function init() {
   $('stage').addEventListener('mousemove', showPlayerControls);
   $('stage').addEventListener('dblclick', toggleFullscreen);
   $('stage').addEventListener('mouseleave', () => $('stage').classList.remove('show-controls'));
+  // Viewer shortcuts, usable in every state, including full screen when the bar is hidden.
   document.addEventListener('keydown', (event) => {
-    if (event.key.toLowerCase() === 'f' && state.view === 'room' && state.remote && !isTyping(event.target)) {
-      toggleFullscreen();
-    }
+    if (state.view !== 'room' || !state.remote || isTyping(event.target) || event.metaKey || event.ctrlKey) return;
+    const key = event.key.toLowerCase();
+    if (key === 'f') toggleFullscreen();
+    else if (key === 'p') togglePopOut();
+    else if (key === 'w') $('fit-btn').click();
+    else return;
+    showPlayerControls();
   });
 
   window.addEventListener('beforeunload', () => {
