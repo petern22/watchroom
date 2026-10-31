@@ -1,3 +1,4 @@
+import './web-shim.js';
 import { mountFlapLine, setFlap } from './flap.js';
 import { LEVEL_WORDS, delayLevel, limitWords, overallLevel, pictureName, smoothnessLevel, speedLevel } from './meters.mjs';
 import { CODE_LENGTH, PRESETS, bitrateFor, cleanCode, newRoomCode, openRoom } from './room.js';
@@ -275,6 +276,10 @@ function updateDock() {
   } else if (other) {
     $('share-label').textContent = `${other.name} is showing`;
     share.disabled = true;
+  } else if (!navigator.mediaDevices?.getDisplayMedia) {
+    // Phones and tablets cannot share their screen from a browser. They can still watch, talk and chat.
+    $('share-label').textContent = 'Can’t share here';
+    share.disabled = true;
   } else {
     $('share-label').textContent = 'Share screen';
     share.disabled = false;
@@ -408,7 +413,12 @@ function selectSource(id) {
 function updatePickerFooter() {
   const source = selectedSource();
   $('picker-share').disabled = !source;
-  $('picker-hint').textContent = source ? `Ready to show ${source.name}.` : 'Choose a source to continue.';
+  $('picker-hint').textContent =
+    source?.id === 'web'
+      ? 'Your browser asks what to share next.'
+      : source
+        ? `Ready to show ${source.name}.`
+        : 'Choose a source to continue.';
 
   const { quality, fps } = state.picker;
   const viewers = Math.max(1, state.peers.length - 1);
@@ -449,6 +459,16 @@ function setFps(fps) {
 async function openPicker() {
   if (!state.session || state.session.me.sharing) return;
   $('picker').hidden = false;
+  if (window.watchroom.isWeb) {
+    // In a browser, the browser itself asks what to share after you confirm here.
+    $('picker').classList.add('is-web');
+    state.picker.sources = [{ id: 'web', name: 'Chosen in your browser', kind: 'screen', thumbnail: '' }];
+    state.picker.sourceId = 'web';
+    $('perm-notice').hidden = true;
+    updatePickerFooter();
+    $('picker-share').focus();
+    return;
+  }
   state.picker.sourceId = null;
   updatePickerFooter();
 
@@ -484,7 +504,7 @@ async function confirmShare() {
   saveShareSettings({ quality, fps, audio, lowDelay, sharp });
   $('picker').hidden = true;
   try {
-    const result = await state.session.startShare({ sourceId: source.id, label: source.name, audio, quality, fps, lowDelay, sharp });
+    const result = await state.session.startShare({ sourceId: source.id, label: source.id === 'web' ? '' : source.name, audio, quality, fps, lowDelay, sharp });
     if (audio && !result.hasAudio) toast('This source has no system sound. Sharing the picture only.');
   } catch (err) {
     toast(describeShareError(err), true);
@@ -657,11 +677,14 @@ function onShareClick() {
 
 function onCopy() {
   if (!state.code) return;
-  navigator.clipboard?.writeText(state.code).catch(() => {});
+  // In a browser, copy a link friends can open to join straight away. On the desktop, copy the code.
+  const web = window.watchroom.isWeb;
+  const text = web ? `${location.origin}${location.pathname}#join=${state.code}` : state.code;
+  navigator.clipboard?.writeText(text).catch(() => {});
   $('copy-label').textContent = 'Copied';
   clearTimeout(state.copyTimer);
   state.copyTimer = setTimeout(() => {
-    $('copy-label').textContent = 'Copy code';
+    $('copy-label').textContent = web ? 'Copy link' : 'Copy code';
   }, 1600);
 }
 
@@ -686,6 +709,7 @@ function setUpdateChip(kind, text) {
 }
 
 async function runUpdateCheck() {
+  if (window.watchroom.isWeb) return;
   setUpdateChip('checking');
   const result = await window.watchroom.checkForUpdates().catch(() => ({ status: 'error' }));
   updateUrl = result.status === 'available' ? result.url : null;
@@ -702,7 +726,28 @@ async function runUpdateCheck() {
   }
 }
 
+// Browsers offer to install the web app. The update button becomes an Install button when they do.
+function setupInstallChip() {
+  const chip = $('update-chip');
+  chip.hidden = true;
+  window.addEventListener('beforeinstallprompt', (event) => {
+    event.preventDefault();
+    state.installEvent = event;
+    setUpdateChip('available', 'Install app');
+    chip.hidden = false;
+  });
+  window.addEventListener('appinstalled', () => {
+    state.installEvent = null;
+    chip.hidden = true;
+  });
+}
+
 function onUpdateChip() {
+  if (state.installEvent) {
+    state.installEvent.prompt();
+    state.installEvent = null;
+    return;
+  }
   if (updateUrl) {
     window.watchroom.openUpdate(updateUrl);
     return;
@@ -802,6 +847,10 @@ function init() {
   });
 
   $('update-chip').addEventListener('click', onUpdateChip);
+  if (window.watchroom.isWeb) {
+    setupInstallChip();
+    $('copy-label').textContent = 'Copy link';
+  }
   window.watchroom.pendingInvite().then(handleInvite);
   window.watchroom.onInvite(handleInvite);
   window.watchroom.appInfo().then((info) => {

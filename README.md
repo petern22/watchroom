@@ -69,3 +69,26 @@ This writes a macOS `.dmg` and a Windows `.exe` installer to `release/`. The bui
 - `renderer/app.js`: screens, picker, chat, board.
 - `renderer/room.js`: rooms, presence, chat, microphone, screen streams and bitrate.
 - `renderer/flap.js`: the split-flap display.
+
+## Web app (installable, no download)
+
+Live: https://watchroom.peterndrio.workers.dev
+
+Open it in Chrome or Edge and use the Install button in the top bar. It then opens like a normal app, in its own window.
+
+- Screen sharing uses the browser's own picker (screen, window or tab). System sound is only offered by some browsers and sources.
+- Phones and tablets can watch, talk and chat, but cannot share their screen.
+- The relay for strict networks works the same as in the desktop app.
+- Share a room with the "Copy link" button. The link opens the web app with the code filled in.
+
+Build and publish:
+
+```bash
+npm run build:web
+```
+
+```bash
+npm run deploy:web
+```
+
+The second command needs `npx wrangler login` once. The web app is a copy of the same code, with a small browser adapter in `renderer/web-shim.js`.

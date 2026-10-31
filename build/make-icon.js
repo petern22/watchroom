@@ -38,6 +38,10 @@ const shapes = [
   { color: 'ffb020', d: (x, y) => circleDistance(x, y, 760, 290, 44) },
 ];
 
+// --maskable: full square background with the tile shrunk into the safe area, for installable-app icons.
+const maskable = process.argv.includes('--maskable');
+const SAFE = 0.74;
+
 const pixels = Buffer.alloc(N * N * 4);
 for (let y = 0; y < N; y += 1) {
   for (let x = 0; x < N; x += 1) {
@@ -45,8 +49,11 @@ for (let y = 0; y < N; y += 1) {
     let g = 0;
     let b = 0;
     let a = 0;
-    for (const shape of shapes) {
-      const coverage = Math.min(Math.max(0.5 - shape.d(x + 0.5, y + 0.5), 0), 1);
+    for (const [index, shape] of shapes.entries()) {
+      const full = maskable && index === 0;
+      const px = maskable && index > 0 ? 512 + (x + 0.5 - 512) / SAFE : x + 0.5;
+      const py = maskable && index > 0 ? 512 + (y + 0.5 - 512) / SAFE : y + 0.5;
+      const coverage = full ? 1 : Math.min(Math.max(0.5 - shape.d(px, py), 0), 1);
       if (coverage <= 0) continue;
       const [sr, sg, sb] = hexToRgb(shape.color);
       const outA = coverage + a * (1 - coverage);
@@ -101,6 +108,6 @@ const png = Buffer.concat([
   chunk('IEND', Buffer.alloc(0)),
 ]);
 
-const out = path.join(__dirname, 'icon.png');
+const out = path.join(__dirname, maskable ? 'icon-maskable.png' : 'icon.png');
 fs.writeFileSync(out, png);
 console.log('wrote', out, png.length, 'bytes');

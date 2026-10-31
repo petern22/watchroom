@@ -15,6 +15,8 @@
     "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js",
     "start": "npm run build && electron .",
     "test": "node test/meters.test.mjs && node test/updates.test.mjs",
+    "build:web": "node scripts/build-web.mjs",
+    "deploy:web": "npm run build:web && npx wrangler deploy --config pwa/wrangler.toml",
     "dist": "npm run build && electron-builder --mac",
     "dist:win": "npm run build && electron-builder --win"
   },

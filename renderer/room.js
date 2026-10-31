@@ -576,7 +576,9 @@ export function openRoom(code, name, on, options = {}) {
       screenTrack.addEventListener('ended', () => stopShare());
     }
     me.sharing = true;
-    me.label = clip(label, 60) || 'Screen';
+    // In a browser there is no name from our own picker, so use what the browser reports. Skip its internal ids.
+    const trackName = screenTrack?.label && !screenTrack.label.includes('://') ? screenTrack.label : '';
+    me.label = clip(label, 60) || clip(trackName, 60) || 'Shared screen';
     addMedia(screenStream, { kind: 'screen', label: me.label });
     applySenderParams();
     startAdapting();
