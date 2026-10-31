@@ -296,7 +296,10 @@ function updateStage() {
   let title = '';
   $('player').hidden = !state.remote;
   if (state.remote) {
-    if (video.srcObject !== state.remote.stream) video.srcObject = state.remote.stream;
+    if (video.srcObject !== state.remote.stream) {
+      video.srcObject = state.remote.stream;
+      video.play().catch(() => toast('Tap the screen to turn on the sound.'));
+    }
     video.hidden = false;
     empty.hidden = true;
     title = state.remote.info.label || remoteSharer?.label || 'Screen';
@@ -304,6 +307,7 @@ function updateStage() {
     video.srcObject = null;
     video.hidden = true;
     empty.hidden = false;
+    setPseudoFullscreen(false);
     if (me?.sharing) {
       setFlap($('empty-line'), 'ON THE BOARD');
       emptyText.textContent = `Everyone in the room sees ${me.label} live. Stop any time from the dock.`;
@@ -619,15 +623,35 @@ function setMuted(muted) {
   btn.setAttribute('aria-label', muted ? 'Unmute' : 'Mute');
 }
 
+// Full screen with fallbacks: the standard call, the old WebKit call, the iPhone video player,
+// and last a stage that fills the page (for browsers that offer nothing else).
 function toggleFullscreen() {
   if (!state.remote) return;
-  if (document.fullscreenElement) {
-    document.exitFullscreen().catch(() => {});
-  } else {
-    $('stage').requestFullscreen().catch((err) => {
-      toast(`Full screen is not available right now (${err?.message || err?.name || 'unknown reason'}).`, true);
-    });
+  const stage = $('stage');
+  const video = $('screen');
+  if (stage.classList.contains('pseudo-fs')) return setPseudoFullscreen(false);
+  if (document.fullscreenElement || document.webkitFullscreenElement) {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    return;
   }
+  const request = stage.requestFullscreen || stage.webkitRequestFullscreen;
+  const fallback = () => {
+    if (video.webkitEnterFullscreen) {
+      try {
+        video.webkitEnterFullscreen();
+        return;
+      } catch {}
+    }
+    setPseudoFullscreen(true);
+  };
+  if (!request) return fallback();
+  Promise.resolve(request.call(stage)).catch(fallback);
+}
+
+function setPseudoFullscreen(on) {
+  $('stage').classList.toggle('pseudo-fs', on);
+  document.body.classList.toggle('has-pseudo-fs', on);
+  showPlayerControls();
 }
 
 async function togglePopOut() {
@@ -898,12 +922,25 @@ function init() {
     $('details-toggle').textContent = open ? 'Hide details' : 'Details';
   });
   $('stage').addEventListener('mousemove', showPlayerControls);
+  // Touch screens have no hover: a tap on the picture brings the controls up.
+  $('stage').addEventListener('pointerdown', (event) => {
+    if (event.pointerType !== 'mouse') showPlayerControls();
+  });
+  // Phones only start sound after a tap. The first touch anywhere wakes up all room audio.
+  const unlock = () => {
+    state.session?.unlockAudio();
+    const video = $('screen');
+    if (video.srcObject && video.paused) video.play().catch(() => {});
+  };
+  for (const type of ['pointerdown', 'touchend', 'keydown']) document.addEventListener(type, unlock, { capture: true });
+  document.addEventListener('webkitfullscreenchange', showPlayerControls);
   $('stage').addEventListener('dblclick', toggleFullscreen);
   $('stage').addEventListener('mouseleave', () => $('stage').classList.remove('show-controls'));
   // Viewer shortcuts, usable in every state, including full screen when the bar is hidden.
   document.addEventListener('keydown', (event) => {
     if (state.view !== 'room' || !state.remote || isTyping(event.target) || event.metaKey || event.ctrlKey) return;
     const key = event.key.toLowerCase();
+    if (event.key === 'Escape') setPseudoFullscreen(false);
     if (key === 'f') toggleFullscreen();
     else if (key === 'p') togglePopOut();
     else if (key === 'w') $('fit-btn').click();

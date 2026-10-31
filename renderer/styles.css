@@ -1847,3 +1847,32 @@ html {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Full screen for browsers without the Fullscreen API (iPhone Safari): the stage fills the page. */
+.stage.pseudo-fs {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  margin: 0;
+  border-radius: 0;
+  border: 0;
+  background: #000;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.stage.pseudo-fs .screen {
+  background: #000;
+}
+
+.has-pseudo-fs {
+  overflow: hidden;
+}
+
+/* Fingers have no hover, so on touch screens the bar stays tappable once shown. */
+@media (hover: none) {
+  .stage.show-controls .player {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}

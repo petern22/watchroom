@@ -635,6 +635,11 @@ export function openRoom(code, name, on, options = {}) {
     stopShare,
     sendChat,
     leave,
+    // Phones keep audio asleep until a touch. Called from a tap, it starts everything that was blocked.
+    unlockAudio() {
+      if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+      for (const el of audioEls.values()) if (el.paused) el.play().catch(() => {});
+    },
     setProfile(quality, fps, lowDelay = profile.lowDelay, sharp = profile.sharp) {
       profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay), sharp: Boolean(sharp) };
       sendState.clear();
