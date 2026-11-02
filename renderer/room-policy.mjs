@@ -23,6 +23,19 @@ const BITRATE_BPS = {
 
 export const UPLOAD_BUDGET_BPS = 25e6;
 
+// Speaking detection. A quiet voice after noise suppression sits near 0.01, so the old 0.025 missed it.
+// Two thresholds stop the flag flickering, and a short hold keeps the movie quiet between words.
+export const SPEAK_ON_LEVEL = 0.01;
+export const SPEAK_OFF_LEVEL = 0.006;
+export const SPEAK_HOLD_MS = 600;
+
+// Returns the next state. `loudAt` is the time the voice was last above the on-level.
+export function nextSpeaking({ level, speaking, loudAt, now }) {
+  if (level >= SPEAK_ON_LEVEL || (speaking && level >= SPEAK_OFF_LEVEL)) return { speaking: true, loudAt: now };
+  if (speaking && now - loudAt < SPEAK_HOLD_MS) return { speaking: true, loudAt };
+  return { speaking: false, loudAt };
+}
+
 export function normalizeProfile(quality, fps) {
   const normalizedQuality = PRESETS[quality] ? quality : '720';
   const normalizedFps = Number(fps) === 60 ? 60 : 30;

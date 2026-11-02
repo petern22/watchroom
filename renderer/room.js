@@ -1,7 +1,7 @@
 import { getRelays } from '@trystero-p2p/core';
 import { defaultRelayUrls, joinRoom } from 'trystero/nostr';
 import { lossPercent, megabitsPerSecond } from './meters.mjs';
-import { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode, normalizeProfile } from './room-policy.mjs';
+import { CODE_LENGTH, MAX_PEERS, nextSpeaking, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode, normalizeProfile } from './room-policy.mjs';
 
 export { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode } from './room-policy.mjs';
 
@@ -11,7 +11,6 @@ export { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCo
 
 const APP_ID = 'watchroom-v1';
 const WAITING_AFTER_MS = 25000;
-const SPEAKING_LEVEL = 0.025;
 const ADAPT_EVERY_MS = 2000;
 const STATS_EVERY_MS = 1000;
 const MIN_VIDEO_BPS = 1e6;
@@ -344,10 +343,22 @@ export function openRoom(code, name, on, options = {}) {
     meters.delete(id);
   }
 
+  function receiverLevel(id) {
+    try {
+      const receiver = room.getPeers()[id]?.getReceivers().find((r) => r.track?.kind === 'audio' && r.track.readyState === 'live');
+      const sources = receiver?.getSynchronizationSources?.() || [];
+      return sources.reduce((max, s) => Math.max(max, Number(s.audioLevel) || 0), 0);
+    } catch {
+      return 0;
+    }
+  }
+
   function meter(id, stream) {
     stopMeter(id);
     if (stream.getAudioTracks().length === 0) return;
     audioCtx ||= new AudioContext();
+    // Browsers start the context asleep until a touch. Ask now; unlockAudio asks again on the first tap.
+    if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
     const source = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
@@ -357,12 +368,16 @@ export function openRoom(code, name, on, options = {}) {
       analyser.getFloatTimeDomainData(buf);
       let sum = 0;
       for (const v of buf) sum += v * v;
-      const level = Math.sqrt(sum / buf.length);
+      let level = Math.sqrt(sum / buf.length);
       const who = id === 'me' ? me : peers.get(id);
       if (!who) return;
-      const speaking = level > SPEAKING_LEVEL && (id === 'me' ? me.mic : who.mic);
-      if (speaking !== who.speaking) {
-        who.speaking = speaking;
+      // The receiver reports its own audio level too. It works even while the audio context is still asleep.
+      if (id !== 'me') level = Math.max(level, receiverLevel(id));
+      const live = id === 'me' ? me.mic : who.mic;
+      const next = nextSpeaking({ level: live ? level : 0, speaking: who.speaking, loudAt: who.loudAt || 0, now: Date.now() });
+      who.loudAt = next.loudAt;
+      if (next.speaking !== who.speaking) {
+        who.speaking = next.speaking;
         emitPeers();
       }
     }, 140);
