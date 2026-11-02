@@ -1,6 +1,7 @@
 import './web-shim.js';
 import { mountFlapLine, setFlap } from './flap.js';
 import { LEVEL_WORDS, delayLevel, limitWords, overallLevel, pictureName, smoothnessLevel, speedLevel } from './meters.mjs';
+import { createAttemptGate } from './room-policy.mjs';
 import { CODE_LENGTH, PRESETS, bitrateFor, cleanCode, newRoomCode, openRoom } from './room.js';
 
 // Screen wiring: home, room, source picker, chat and the flap board.
@@ -9,15 +10,19 @@ import { CODE_LENGTH, PRESETS, bitrateFor, cleanCode, newRoomCode, openRoom } fr
 const $ = (id) => document.getElementById(id);
 const CODE_PATTERN = /^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{6}$/;
 const NAME_KEY = 'watchroom.name';
+const roomAttempts = createAttemptGate();
 const STATUS_TEXT = {
   ready: 'Ready',
   connecting: 'Connecting',
+  reconnecting: 'Reconnecting…',
+  offline: 'Offline. Waiting for your connection.',
   live: 'Connected',
   waiting: 'Waiting for others. Share the code.',
   error: 'Connection problem',
 };
 
 const state = {
+  askedPause: false,
   session: null,
   code: '',
   view: 'home',
@@ -105,8 +110,8 @@ function setStatus(kind) {
   const lamp = $('status-lamp');
   lamp.className = 'lamp';
   if (kind === 'live') lamp.classList.add('is-live');
-  if (kind === 'connecting' || kind === 'waiting') lamp.classList.add('is-wait');
-  if (kind === 'error') lamp.classList.add('is-error');
+  if (kind === 'connecting' || kind === 'reconnecting' || kind === 'waiting') lamp.classList.add('is-wait');
+  if (kind === 'offline' || kind === 'error') lamp.classList.add('is-error');
   $('status-text').textContent = STATUS_TEXT[kind] || STATUS_TEXT.ready;
 }
 
@@ -189,6 +194,7 @@ function readName() {
 }
 
 async function startRoom(code) {
+  const attempt = roomAttempts.begin();
   const name = readName();
   if (!name) {
     showHomeError('Add your name first, so the others know who just walked in.');
@@ -199,6 +205,8 @@ async function startRoom(code) {
   saveName(name);
   const turn = await window.watchroom.turnServers();
   const forceRelay = await window.watchroom.forceRelay();
+  const relayUrl = await window.watchroom.relayUrl();
+  if (!roomAttempts.isCurrent(attempt)) return;
   if (state.session) leaveRoom();
 
   state.code = code;
@@ -212,9 +220,8 @@ async function startRoom(code) {
   $('people').replaceChildren();
   updateStage();
 
-  const session = openRoom(code, name, handlers, { turnConfig: turn, forceRelay });
+  const session = openRoom(code, name, handlers, { turnConfig: turn, forceRelay, relayUrl });
   state.session = session;
-  session.startMic();
 }
 
 function onCreate() {
@@ -267,6 +274,12 @@ function updateDock() {
   const micOn = Boolean(me?.mic);
   $('mic-btn').setAttribute('aria-pressed', String(micOn));
   $('mic-label').textContent = micOn ? 'Mic on' : 'Mic off';
+
+  // Viewers can ask the sharer to pause. It is only a request: the sharer still presses pause themselves.
+  const pause = $('pause-btn');
+  pause.hidden = !other;
+  if (!other) state.askedPause = false;
+  $('pause-label').textContent = state.askedPause ? 'Ask to resume' : 'Ask to pause';
 
   const share = $('share-btn');
   share.classList.toggle('is-live', Boolean(me?.sharing));
@@ -357,6 +370,7 @@ function addChat(msg) {
   head.append(el('span', msg.self ? 'msg-name is-you' : 'msg-name', msg.name), el('time', 'msg-time', formatTime(msg.at)));
   li.append(head, el('p', 'msg-text', msg.text));
   list.append(li);
+  while (list.childElementCount > 250) list.firstElementChild.remove();
   list.scrollTop = list.scrollHeight;
   if (state.tab !== 'chat') {
     state.unread += 1;
@@ -495,6 +509,9 @@ function describeShareError(err) {
   if (err?.name === 'NotAllowedError') {
     return 'Screen sharing was blocked. On a Mac, check Screen Recording for Watchroom in System Settings.';
   }
+  if (err?.name === 'NotFoundError') return 'No screen or window is available to share.';
+  if (err?.name === 'NotReadableError') return 'The selected screen is busy or blocked by the operating system. Try another source.';
+  if (err?.name === 'AbortError') return 'Screen sharing stopped before it could start. Please try again.';
   return err?.message || 'The screen could not be shared.';
 }
 
@@ -531,6 +548,15 @@ const handlers = {
   },
   chat: addChat,
   system: addSystem,
+  request({ name, kind, self }) {
+    const sharer = state.peers.find((p) => p.sharing && !p.you)?.name;
+    const text =
+      kind === 'pause'
+        ? `${self ? 'You ask' : `${name} asks`} to pause${sharer && !self ? `. Only ${sharer} can press pause` : ''}.`
+        : `${self ? 'You are' : `${name} is`} ready to continue.`;
+    addSystem(text);
+    if (!self) toast(text);
+  },
   screen(stream, info) {
     state.remote = stream ? { stream, info } : null;
     updateStage();
@@ -540,6 +566,10 @@ const handlers = {
   },
   error(message) {
     toast(message, true);
+  },
+  full(max) {
+    toast(`This room is full. It supports up to ${max} people.`, true);
+    leaveRoom();
   },
   quality(info) {
     renderPlayer(info);
@@ -666,6 +696,7 @@ async function togglePopOut() {
 
 
 function leaveRoom() {
+  roomAttempts.cancel();
   const session = state.session;
   state.session = null;
   state.remote = null;
@@ -826,6 +857,15 @@ function init() {
 
   $('mic-btn').addEventListener('click', onMicClick);
   $('share-btn').addEventListener('click', onShareClick);
+  $('pause-btn').addEventListener('click', () => {
+    const kind = state.askedPause ? 'ready' : 'pause';
+    if (!state.session?.sendRequest(kind)) return;
+    state.askedPause = !state.askedPause;
+    updateDock();
+    // One request every few seconds, so the button cannot be used to spam the room.
+    $('pause-btn').disabled = true;
+    setTimeout(() => ($('pause-btn').disabled = false), 3000);
+  });
   $('chat-btn').addEventListener('click', () => selectTab('chat'));
   $('leave-btn').addEventListener('click', leaveRoom);
   $('copy-code').addEventListener('click', onCopy);

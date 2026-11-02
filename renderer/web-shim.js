@@ -25,7 +25,7 @@ if (!window.watchroom) {
     onInvite: () => {},
     turnServers: async () => {
       try {
-        const response = await fetch(TURN_URL);
+        const response = await fetch(TURN_URL, { signal: AbortSignal.timeout(4000) });
         if (response.ok) {
           const data = await response.json();
           if (Array.isArray(data.iceServers)) return data.iceServers;
@@ -35,6 +35,7 @@ if (!window.watchroom) {
       }
       return [];
     },
+    relayUrl: async () => 'wss://watchroom-relay.peterndrio.workers.dev',
     forceRelay: async () => false,
   };
 

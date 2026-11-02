@@ -18,8 +18,8 @@
   --lamp-ink: #17110a;
   --lamp-soft: rgba(255, 176, 32, 0.16);
   --alert: #ff7a6b;
-  --display: 'Bahnschrift', 'DIN Alternate', 'DIN Condensed', 'Arial Narrow', system-ui, sans-serif;
-  --text: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --display: ui-rounded, 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
+  --text: 'Avenir Next', 'Segoe UI Variable Text', system-ui, sans-serif;
   color-scheme: dark;
 
   /* Easing tokens. Built-in ease-in feels sluggish for UI, so UI uses these instead. */
@@ -105,6 +105,7 @@ body {
 
 .brand {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 10px;
 }
@@ -1816,6 +1817,12 @@ html {
   }
 }
 
+@media (min-width: 821px) and (max-width: 1180px) {
+  .brand-name {
+    display: none;
+  }
+}
+
 /* ---------- narrow windows ---------- */
 
 @media (max-width: 1120px) {
@@ -1875,4 +1882,8 @@ html {
     opacity: 1;
     pointer-events: auto;
   }
+}
+
+.key[hidden] {
+  display: none;
 }

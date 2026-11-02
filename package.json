@@ -1,9 +1,10 @@
 {
   "name": "watchroom",
   "productName": "Watchroom",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
   "private": true,
+  "watchroomRelayUrl": "wss://watchroom-relay.peterndrio.workers.dev",
   "watchroomTurnUrl": "https://watchroom-turn.peterndrio.workers.dev",
   "watchroomTurn": [],
   "watchroomUpdates": {
@@ -14,7 +15,7 @@
   "scripts": {
     "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js",
     "start": "npm run build && electron .",
-    "test": "node test/meters.test.mjs && node test/updates.test.mjs",
+    "test": "node test/meters.test.mjs && node test/room-policy.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/room-lifecycle.test.mjs && node test/relay.test.mjs && node test/updates.test.mjs",
     "build:web": "node scripts/build-web.mjs",
     "deploy:web": "npm run build:web && npx wrangler deploy --config pwa/wrangler.toml",
     "dist": "npm run build && electron-builder --mac",

@@ -51,6 +51,8 @@ With a typical home upload, 4K at 60 fps is realistic for one or two viewers onl
 
 - Media goes directly between computers (WebRTC). Strict networks, such as some cellular or corporate connections, may fail to connect without a relay server.
 - Signaling uses public Nostr relays. If one relay is down or rate-limits, the others are used.
+- Rooms support up to eight people. Media and room messages use WebRTC encryption and are not stored by Watchroom. Public relays handle peer discovery and can observe connection metadata.
+- Watchroom shares a picture of a window. It cannot press play, pause or seek in the app being shared, so playback is not synchronized. The person sharing controls it.
 - Rooms are not stored. When everyone leaves, the room is gone.
 
 ## Build installers
@@ -92,3 +94,13 @@ npm run deploy:web
 ```
 
 The second command needs `npx wrangler login` once. The web app is a copy of the same code, with a small browser adapter in `renderer/web-shim.js`.
+
+## Own relay
+
+`worker/relay` is a small Nostr relay on Cloudflare that helps peers find each other. It only passes short-lived messages between people connected right now and stores nothing. Apps use it together with the public relays. Deploy it with:
+
+```bash
+cd worker/relay && npx wrangler deploy
+```
+
+The address is `watchroomRelayUrl` in `package.json` and `renderer/web-shim.js`.

@@ -1,67 +1,23 @@
-import { joinRoom } from 'trystero/nostr';
+import { getRelays } from '@trystero-p2p/core';
+import { defaultRelayUrls, joinRoom } from 'trystero/nostr';
 import { lossPercent, megabitsPerSecond } from './meters.mjs';
+import { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode, normalizeProfile } from './room-policy.mjs';
+
+export { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode } from './room-policy.mjs';
 
 // Room layer: presence, chat, microphone and screen streams over WebRTC.
 // Signaling runs through public Nostr relays, so there is no account and no server to run.
 // Everything here lives in memory. Nothing is stored between sessions.
 
 const APP_ID = 'watchroom-v1';
-const CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const CODE_LENGTH = 6;
 const WAITING_AFTER_MS = 25000;
 const SPEAKING_LEVEL = 0.025;
 const ADAPT_EVERY_MS = 2000;
 const STATS_EVERY_MS = 1000;
 const MIN_VIDEO_BPS = 1e6;
 const AUDIO_BPS = 128e3;
-
-// Share presets. Bitrates are per viewer at the sender, in bits per second.
-// Each viewer gets its own stream, so the sender's total upload is bitrate x viewers.
-const PRESETS = {
-  720: { width: 1280, height: 720, label: '720p' },
-  1080: { width: 1920, height: 1080, label: '1080p' },
-  1440: { width: 2560, height: 1440, label: '1440p' },
-  2160: { width: 3840, height: 2160, label: '4K' },
-};
-const BITRATE_BPS = {
-  '720-30': 3e6,
-  '720-60': 4.5e6,
-  '1080-30': 6e6,
-  '1080-60': 9e6,
-  '1440-30': 10e6,
-  '1440-60': 14e6,
-  '2160-30': 16e6,
-  '2160-60': 22e6,
-};
-// Most home uplinks cannot carry more than this, so the sender's total is capped here.
-const UPLOAD_BUDGET_BPS = 25e6;
-
-export function normalizeProfile(quality, fps) {
-  const q = PRESETS[quality] ? quality : '720';
-  const f = Number(fps) === 60 ? 60 : 30;
-  return { quality: q, fps: f, ...PRESETS[q] };
-}
-
-// Bitrate per viewer after the upload budget is applied.
-export function bitrateFor(quality, fps, viewers) {
-  const { quality: q, fps: f } = normalizeProfile(quality, fps);
-  const wanted = BITRATE_BPS[`${q}-${f}`];
-  return Math.min(wanted, UPLOAD_BUDGET_BPS / Math.max(1, viewers));
-}
-
-export { CODE_LENGTH, PRESETS, UPLOAD_BUDGET_BPS };
-
-export function newRoomCode() {
-  const bytes = crypto.getRandomValues(new Uint8Array(CODE_LENGTH));
-  return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
-}
-
-export function cleanCode(value) {
-  return String(value ?? '')
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .slice(0, CODE_LENGTH);
-}
+const REQUEST_KINDS = new Set(['pause', 'ready']);
+const REQUEST_GAP_MS = 3000;
 
 function clip(value, max) {
   return String(value ?? '').trim().slice(0, max);
@@ -104,24 +60,41 @@ class H264PreferringConnection extends RTCPeerConnection {
 export function openRoom(code, name, on, options = {}) {
   const config = { appId: APP_ID, password: code, rtcPolyfill: H264PreferringConnection };
   if (options.turnConfig?.length) config.turnConfig = options.turnConfig;
+  // Our own relay first, then the same public relays older versions use, so old and new apps always share one.
+  if (options.relayUrl) config.relayConfig = { urls: [options.relayUrl, ...getRelays(config, defaultRelayUrls, 5, true)] };
   if (options.forceRelay) config.rtcConfig = { iceTransportPolicy: 'relay' };
-  const room = joinRoom(config, code);
+  const room = (options.joinRoom || joinRoom)(config, code);
   const helloAction = room.makeAction('hello');
   const stateAction = room.makeAction('state');
   const chatAction = room.makeAction('chat');
+  const capacityAction = room.makeAction('capacity');
+  const requestAction = room.makeAction('request');
 
-  const audioCtx = new AudioContext();
+  let audioCtx = null;
   const me = { id: 'me', name: cleanName(name), mic: false, sharing: false, label: '', speaking: false, you: true };
   const peers = new Map();
   const meters = new Map();
   const audioEls = new Map();
 
   let micStream = null;
+  let micPending = false;
+  let sharePending = false;
   let screenStream = null;
   let screenTrack = null;
   let profile = { ...normalizeProfile('720', 30), lowDelay: false, sharp: false };
   let stageId = null;
   let closed = false;
+  const recoverConnections = () => {
+    if (closed) return;
+    const open = Object.values(room.getPeers());
+    // With nobody else in the room there is nothing to reconnect to. Go back to waiting, not "Reconnecting" forever.
+    on.status(navigator.onLine === false ? 'offline' : open.length ? 'reconnecting' : 'waiting');
+    for (const pc of open) {
+      if (pc.connectionState !== 'connected') pc.close();
+    }
+  };
+  window.addEventListener('online', recoverConnections);
+  window.addEventListener('offline', recoverConnections);
   // Per viewer: the bitrate cap and resolution scale the sender has settled on.
   const sendState = new Map();
   let adaptTimer = null;
@@ -178,8 +151,7 @@ export function openRoom(code, name, on, options = {}) {
     if (!screenTrack) return;
     const target = targetBps();
     for (const [peerId, pc] of Object.entries(room.getPeers())) {
-      // Start above the default, so a good line reaches full quality quickly. The congestion rule pulls it back if needed.
-      const start = profile.lowDelay ? target : target * 1.5;
+      const start = target;
       const state = sendState.get(peerId) || { cap: start, scale: 1, limit: 'none', stable: 0 };
       sendState.set(peerId, state);
       state.cap = Math.min(state.cap, state.ceiling ?? start);
@@ -375,6 +347,7 @@ export function openRoom(code, name, on, options = {}) {
   function meter(id, stream) {
     stopMeter(id);
     if (stream.getAudioTracks().length === 0) return;
+    audioCtx ||= new AudioContext();
     const source = audioCtx.createMediaStreamSource(stream);
     const analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
@@ -427,14 +400,14 @@ export function openRoom(code, name, on, options = {}) {
     on.screen(stream, info);
   }
 
-  // Ask the browser to skip its jitter buffer for incoming video. Frames show as soon as they arrive.
+  // Keep a small playout buffer so mobile receivers absorb ordinary Wi-Fi jitter without adding much delay.
   function lowerPlayoutDelay(peerId) {
     const pc = room.getPeers()[peerId];
     pc?.getReceivers().forEach((receiver) => {
       try {
-        receiver.playoutDelayHint = 0;
-        // Chromium's newer setting for the same thing: keep the video buffer at its minimum.
-        if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 0;
+        receiver.playoutDelayHint = 0.1;
+        // Chromium's newer setting uses milliseconds.
+        if ('jitterBufferTarget' in receiver) receiver.jitterBufferTarget = 100;
       } catch {
         /* not supported in this browser build; playback still works */
       }
@@ -468,18 +441,50 @@ export function openRoom(code, name, on, options = {}) {
 
   chatAction.onMessage = (data, { peerId }) => {
     const p = peers.get(peerId);
+    if (!p || typeof data?.text !== 'string' || !data.text.trim()) return;
+    const now = Date.now();
+    p.chatTimes = (p.chatTimes || []).filter((at) => now - at < 3000);
+    if (p.chatTimes.length >= 8) return;
+    p.chatTimes.push(now);
     on.chat({
       id: clip(data?.id, 64) || crypto.randomUUID(),
-      name: cleanName(data?.name ?? p?.name),
+      name: p.name,
       text: clip(data?.text, 500),
-      at: Number(data?.at) || Date.now(),
+      at: now,
       self: false,
     });
+  };
+
+  // A request is only a message. Watchroom cannot control the app being shared, so the sharer decides.
+  requestAction.onMessage = (data, { peerId }) => {
+    const p = peers.get(peerId);
+    if (!p || !REQUEST_KINDS.has(data?.kind)) return;
+    const now = Date.now();
+    if (now - (p.lastRequestAt || 0) < REQUEST_GAP_MS) return;
+    p.lastRequestAt = now;
+    on.request?.({ name: p.name, kind: data.kind, self: false });
+  };
+
+  capacityAction.onMessage = (data) => {
+    if (data?.full) on.full?.(Number(data.max) || MAX_PEERS);
   };
 
   // ---- room lifecycle ----
 
   room.onPeerJoin = (peerId) => {
+    const pc = room.getPeers()[peerId];
+    if (peers.size >= MAX_PEERS - 1) {
+      // The newcomer leaves the whole room when it hears this, so a rejection never leaves it in a partial mesh.
+      // Close late enough for the notice to arrive. A failed send is not actionable here: the peer is already gone.
+      Promise.resolve(capacityAction.send({ full: true, max: MAX_PEERS }, { target: peerId })).catch(() => {});
+      setTimeout(() => pc?.close(), 1000);
+      return;
+    }
+    pc?.addEventListener('connectionstatechange', () => {
+      if (closed) return;
+      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') on.status('reconnecting');
+      if (pc.connectionState === 'connected') on.status('live');
+    });
     ensurePeer(peerId);
     clearTimeout(waitTimer);
     on.status('live');
@@ -523,13 +528,22 @@ export function openRoom(code, name, on, options = {}) {
   // ---- local actions ----
 
   async function startMic() {
+    if (closed || micPending) return false;
     if (micStream) return true;
+    micPending = true;
     try {
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
       });
     } catch {
       on.error('Microphone is unavailable. You can still watch and chat.');
+      return false;
+    } finally {
+      micPending = false;
+    }
+    if (closed) {
+      micStream.getTracks().forEach((track) => track.stop());
+      micStream = null;
       return false;
     }
     micStream.getAudioTracks().forEach((track) => {
@@ -554,26 +568,36 @@ export function openRoom(code, name, on, options = {}) {
   }
 
   async function startShare({ sourceId, label, audio, quality, fps, lowDelay, sharp }) {
+    if (closed || sharePending) throw new Error('Another sharing request is active or the room has closed.');
+    sharePending = true;
     if (screenStream) stopShare();
     profile = { ...normalizeProfile(quality, fps), lowDelay: Boolean(lowDelay), sharp: Boolean(sharp) };
     sendState.clear();
-    await window.watchroom.prepareShare(sourceId, audio);
     let stream;
     try {
+      await window.watchroom.prepareShare(sourceId, audio);
       stream = await navigator.mediaDevices.getDisplayMedia({
         video: captureConstraints(),
         audio: Boolean(audio),
       });
     } catch (err) {
-      await window.watchroom.cancelShare();
+      await window.watchroom.cancelShare().catch(() => {});
       throw err;
+    } finally {
+      sharePending = false;
     }
 
+    if (closed) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('Room closed.');
+    }
     screenStream = stream;
     screenTrack = stream.getVideoTracks()[0];
     if (screenTrack) {
       screenTrack.contentHint = 'motion';
-      screenTrack.addEventListener('ended', () => stopShare());
+      screenTrack.addEventListener('ended', () => {
+        if (screenStream === stream) stopShare();
+      });
     }
     me.sharing = true;
     // In a browser there is no name from our own picker, so use what the browser reports. Skip its internal ids.
@@ -610,9 +634,18 @@ export function openRoom(code, name, on, options = {}) {
     on.chat({ ...msg, self: true });
   }
 
+  function sendRequest(kind) {
+    if (!REQUEST_KINDS.has(kind) || peers.size === 0) return false;
+    Promise.resolve(requestAction.send({ kind })).catch(() => {});
+    on.request?.({ name: me.name, kind, self: true });
+    return true;
+  }
+
   async function leave() {
     if (closed) return;
     closed = true;
+    window.removeEventListener('online', recoverConnections);
+    window.removeEventListener('offline', recoverConnections);
     clearTimeout(waitTimer);
     stopShare();
     stopWatching();
@@ -620,7 +653,8 @@ export function openRoom(code, name, on, options = {}) {
     micStream = null;
     for (const id of [...meters.keys()]) stopMeter(id);
     for (const id of [...audioEls.keys()]) dropAudio(id);
-    audioCtx.close().catch(() => {});
+    audioCtx?.close().catch(() => {});
+    audioCtx = null;
     await room.leave();
   }
 
@@ -634,9 +668,11 @@ export function openRoom(code, name, on, options = {}) {
     startShare,
     stopShare,
     sendChat,
+    sendRequest,
     leave,
     // Phones keep audio asleep until a touch. Called from a tap, it starts everything that was blocked.
     unlockAudio() {
+      audioCtx ||= new AudioContext();
       if (audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
       for (const el of audioEls.values()) if (el.paused) el.play().catch(() => {});
     },

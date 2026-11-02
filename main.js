@@ -1,5 +1,6 @@
 const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { checkForUpdate } = require('./updates');
 const pkg = require('./package.json');
 
@@ -12,6 +13,15 @@ const isMac = process.platform === 'darwin';
 // Invite links: watchroom://join/ABC123 opens the app with that room code filled in.
 const INVITE = /^watchroom:\/\/join\/([A-Za-z0-9]{6})\/?$/;
 let pendingInvite = null;
+const rendererUrl = pathToFileURL(path.join(__dirname, 'renderer', 'index.html')).href;
+
+function isTrustedContents(webContents) {
+  return Boolean(webContents && !webContents.isDestroyed() && webContents.getURL() === rendererUrl);
+}
+
+function assertTrustedEvent(event) {
+  if (!isTrustedContents(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted renderer');
+}
 
 function inviteFrom(args) {
   const link = args.find((arg) => typeof arg === 'string' && arg.startsWith('watchroom://'));
@@ -52,12 +62,12 @@ function createWindow() {
   });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+    if (url.startsWith('https://github.com/')) shell.openExternal(url);
     return { action: 'deny' };
   });
 
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith('file:')) event.preventDefault();
+    if (url !== rendererUrl) event.preventDefault();
   });
 
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -85,53 +95,61 @@ function listSources(excludeId) {
 
 function registerIpc() {
   ipcMain.handle('sources:list', (event) => {
+    assertTrustedEvent(event);
     const own = BrowserWindow.fromWebContents(event.sender);
     return listSources(own ? own.getMediaSourceId() : null);
   });
 
-  ipcMain.handle('share:prepare', (_event, { sourceId, audio }) => {
+  ipcMain.handle('share:prepare', (event, { sourceId, audio }) => {
+    assertTrustedEvent(event);
     if (typeof sourceId !== 'string' || sourceId.length > 200) throw new Error('Invalid source');
-    pendingShare = { sourceId, audio: Boolean(audio) };
+    pendingShare = { sourceId, audio: Boolean(audio), frame: event.senderFrame, expires: Date.now() + 15000 };
     return true;
   });
 
-  ipcMain.handle('share:cancel', () => {
+  ipcMain.handle('share:cancel', (event) => {
+    assertTrustedEvent(event);
     pendingShare = null;
     return true;
   });
 
-  ipcMain.handle('system:screen-access', () => {
+  ipcMain.handle('system:screen-access', (event) => {
+    assertTrustedEvent(event);
     if (!isMac) return 'granted';
     return systemPreferences.getMediaAccessStatus('screen');
   });
 
-  ipcMain.handle('system:open-screen-settings', () => {
+  ipcMain.handle('system:open-screen-settings', (event) => {
+    assertTrustedEvent(event);
     if (isMac) {
       return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
     }
     return false;
   });
 
-  ipcMain.handle('updates:check', () =>
-    checkForUpdate({
+  ipcMain.handle('updates:check', (event) => {
+    assertTrustedEvent(event);
+    return checkForUpdate({
       owner: pkg.watchroomUpdates?.owner,
       repo: pkg.watchroomUpdates?.repo,
       currentVersion: app.getVersion(),
-    }),
-  );
+    });
+  });
 
   // Only ever opens GitHub download pages, never arbitrary links from the page.
-  ipcMain.handle('updates:open', (_event, url) => {
+  ipcMain.handle('updates:open', (event, url) => {
+    assertTrustedEvent(event);
     if (typeof url === 'string' && url.startsWith('https://github.com/')) shell.openExternal(url);
     return true;
   });
 
   // Optional relay servers for networks that block direct connections. Empty until one is set in package.json.
   // Short-lived relay logins from the Cloudflare Worker, fetched fresh for each room. Falls back to any static list.
-  ipcMain.handle('config:turn', async () => {
+  ipcMain.handle('config:turn', async (event) => {
+    assertTrustedEvent(event);
     if (pkg.watchroomTurnUrl) {
       try {
-        const response = await fetch(pkg.watchroomTurnUrl);
+        const response = await fetch(pkg.watchroomTurnUrl, { signal: AbortSignal.timeout(4000) });
         if (response.ok) {
           const data = await response.json();
           if (Array.isArray(data.iceServers)) return data.iceServers;
@@ -143,19 +161,29 @@ function registerIpc() {
     return pkg.watchroomTurn || [];
   });
 
-  // Test switch only: WATCHROOM_FORCE_RELAY=1 sends every call through the relay, to prove the relay works.
-  ipcMain.handle('config:force-relay', () => process.env.WATCHROOM_FORCE_RELAY === '1');
+  // Our own room-discovery relay. Used in addition to the public ones, never instead of them.
+  ipcMain.handle('config:relay', (event) => {
+    assertTrustedEvent(event);
+    return pkg.watchroomRelayUrl || '';
+  });
 
-  ipcMain.handle('invite:pending', () => {
+  // Test switch only: WATCHROOM_FORCE_RELAY=1 sends every call through the relay, to prove the relay works.
+  ipcMain.handle('config:force-relay', (event) => {
+    assertTrustedEvent(event);
+    return process.env.WATCHROOM_FORCE_RELAY === '1';
+  });
+
+  ipcMain.handle('invite:pending', (event) => {
+    assertTrustedEvent(event);
     const code = pendingInvite;
     pendingInvite = null;
     return code;
   });
 
-  ipcMain.handle('app:info', () => ({
-    version: app.getVersion(),
-    platform: process.platform,
-  }));
+  ipcMain.handle('app:info', (event) => {
+    assertTrustedEvent(event);
+    return { version: app.getVersion(), platform: process.platform };
+  });
 }
 
 pendingInvite = inviteFrom(process.argv);
@@ -173,12 +201,12 @@ app.whenReady().then(() => {
   app.setAsDefaultProtocolClient('watchroom');
   // Only the renderer's own page may capture, and only the source chosen in the picker.
   session.defaultSession.setDisplayMediaRequestHandler(
-    async (_request, callback) => {
+    async (request, callback) => {
       const choice = pendingShare;
       pendingShare = null;
-      if (!choice) return callback({});
+      if (!choice || choice.frame !== request.frame || Date.now() > choice.expires) return callback({});
 
-      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] });
+      const sources = await desktopCapturer.getSources({ types: ['screen', 'window'] }).catch(() => []);
       const source = sources.find((item) => item.id === choice.sourceId);
       if (!source) return callback({});
 
@@ -187,12 +215,12 @@ app.whenReady().then(() => {
     { useSystemPicker: false },
   );
 
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(['media', 'display-capture', 'notifications', 'fullscreen'].includes(permission));
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(isTrustedContents(webContents) && ['media', 'display-capture', 'fullscreen'].includes(permission));
   });
 
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission) =>
-    ['media', 'display-capture', 'fullscreen'].includes(permission),
+  session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) =>
+    isTrustedContents(webContents) && requestingOrigin === 'file://' && ['media', 'display-capture', 'fullscreen'].includes(permission),
   );
 
   registerIpc();
