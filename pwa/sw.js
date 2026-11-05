@@ -39,3 +39,14 @@ self.addEventListener('fetch', (event) => {
       .catch(() => caches.match(request).then((cached) => cached || caches.match('index.html'))),
   );
 });
+
+// Tapping a notification brings the app back.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      if (list[0]) return list[0].focus();
+      return self.clients.openWindow('./');
+    }),
+  );
+});

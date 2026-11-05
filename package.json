@@ -1,7 +1,7 @@
 {
   "name": "watchroom",
   "productName": "Watchroom",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "Watch together. Share a screen or window with family and friends, with voice and chat.",
   "private": true,
   "watchroomRelayUrl": "wss://watchroom-relay.peterndrio.workers.dev",
@@ -13,9 +13,9 @@
   },
   "main": "main.js",
   "scripts": {
-    "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js",
+    "build": "esbuild renderer/app.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/bundle.js && esbuild renderer/hearts.js --bundle --format=iife --target=chrome120 --minify --outfile=renderer/hearts-bundle.js",
     "start": "npm run build && electron .",
-    "test": "node test/meters.test.mjs && node test/room-policy.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/room-lifecycle.test.mjs && node test/relay.test.mjs && node test/updates.test.mjs",
+    "test": "node test/meters.test.mjs && node test/room-policy.test.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON test/room-lifecycle.test.mjs && node test/extras.test.mjs && node test/relay.test.mjs && node test/updates.test.mjs",
     "build:web": "node scripts/build-web.mjs",
     "deploy:web": "npm run build:web && npx wrangler deploy --config pwa/wrangler.toml",
     "dist": "npm run build && electron-builder --mac",
@@ -43,7 +43,11 @@
       "updates.js",
       "renderer/index.html",
       "renderer/styles.css",
-      "renderer/bundle.js"
+      "renderer/bundle.js",
+      "renderer/hearts.html",
+      "renderer/alert.html",
+      "renderer/alert.js",
+      "renderer/hearts-bundle.js"
     ],
     "mac": {
       "category": "public.app-category.entertainment",

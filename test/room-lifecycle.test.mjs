@@ -298,4 +298,37 @@ function makeSession() {
   await session.leave();
 }
 
+{
+  const room = makeRoom();
+  const calls = [];
+  const handlers = { ...makeHandlers(), nuki: (on, name) => calls.push([on, name]), thinking: (name) => calls.push(name) };
+  const session = openRoom('ABC234', 'Guest', handlers, { joinRoom: () => room });
+  room.peers.host = makePeer();
+  room.onPeerJoin('host');
+  room.actions.hello.onMessage({ name: 'Host' }, { peerId: 'host' });
+  room.actions.nuki.onMessage({ on: true }, { peerId: 'host' });
+  room.actions.nuki.onMessage({ on: 'yes' }, { peerId: 'host' });
+  room.actions.thinking.onMessage({}, { peerId: 'host' });
+  room.actions.thinking.onMessage({}, { peerId: 'host' });
+  room.actions.thinking.onMessage({}, { peerId: 'stranger' });
+  assert.deepEqual(calls, [[true, 'Host'], 'Host'], 'bad values, repeats and strangers are ignored');
+  session.setNuki(true);
+  assert.equal(room.sent.some((m) => m.name === 'nuki'), false, 'a guest cannot switch Nuki Time');
+  await session.leave();
+}
+
+{
+  const room = makeRoom();
+  const calls = [];
+  const session = openRoom('ABC234', 'Host', { ...makeHandlers(), nuki: () => calls.push('x') }, { joinRoom: () => room, host: true });
+  session.setNuki(true);
+  room.peers.late = makePeer();
+  room.onPeerJoin('late');
+  const late = room.sent.filter((m) => m.name === 'nuki').at(-1);
+  assert.deepEqual(late, { name: 'nuki', data: { on: true }, options: { target: 'late' } }, 'someone joining late gets the current mode');
+  room.actions.nuki.onMessage({ on: false }, { peerId: 'late' });
+  assert.equal(calls.length, 0, 'the creator ignores others');
+  await session.leave();
+}
+
 console.log('room lifecycle ok');

@@ -1,7 +1,7 @@
 // Run with: node test/room-policy.test.mjs
 import assert from 'node:assert/strict';
 
-import { SPEAK_HOLD_MS, createAttemptGate, nextSpeaking, MAX_PEERS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, normalizeProfile } from '../renderer/room-policy.mjs';
+import { cleanGifUrl, levelFromSlider, sliderFromLevel, SPEAK_HOLD_MS, createAttemptGate, nextSpeaking, MAX_PEERS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, normalizeProfile } from '../renderer/room-policy.mjs';
 
 assert.deepEqual(normalizeProfile('1080', 60), {
   quality: '1080',
@@ -40,5 +40,16 @@ assert.equal(MAX_PEERS, 8);
   assert.equal(s.speaking, false, 'after the hold the flag drops');
   assert.equal(nextSpeaking({ level: 0.008, speaking: false, loudAt: 0, now: 5000 }).speaking, false, 'noise below the on-level never starts it');
 }
+
+assert.equal(nextSpeaking({ level: 0.03, speaking: false, loudAt: 0, now: 1, on: 0.05 }).speaking, false, 'a higher threshold ignores a quiet voice');
+assert.equal(nextSpeaking({ level: 0.06, speaking: false, loudAt: 0, now: 1, on: 0.05 }).speaking, true);
+assert.equal(sliderFromLevel(levelFromSlider(50)), 50, 'the slider and the level map back and forth');
+assert.ok(levelFromSlider(0) >= 0.003 && levelFromSlider(100) <= 0.12);
+
+assert.ok(cleanGifUrl('https://media2.giphy.com/media/v1.abc/xyz/200w.gif'));
+assert.equal(cleanGifUrl('https://evil.example/media/a.gif'), '', 'other servers are refused');
+assert.equal(cleanGifUrl('https://media.giphy.com/media/a.gif?track=1'), '');
+assert.equal(cleanGifUrl('https://media.giphy.com/media/../x.gif'), '');
+assert.equal(cleanGifUrl(5), '');
 
 console.log('room policy ok');

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' wss: https:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.giphy.com; media-src 'self' blob: mediastream:; connect-src 'self' wss: https:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
@@ -12,6 +12,8 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <video id="ambient-video" class="ambient-video" autoplay muted playsinline aria-hidden="true"></video>
+    <div class="ambient-wash" aria-hidden="true"></div>
     <div class="app" id="app" data-view="home">
       <header class="topbar">
         <div class="brand">
@@ -38,6 +40,13 @@
 
         <button class="chip update-chip" id="update-chip" type="button" aria-live="polite">
           <span id="update-label">Check for updates</span>
+        </button>
+
+        <button class="icon-btn" id="settings-btn" type="button" aria-label="Settings" title="Settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8" />
+          </svg>
         </button>
 
         <div class="status" id="status" role="status">
@@ -107,6 +116,7 @@
 
           <div class="stage" id="stage">
             <video id="screen" class="screen" autoplay playsinline></video>
+            <ul class="stage-alerts" id="stage-alerts" aria-hidden="true"></ul>
 
             <div class="player" id="player" hidden>
               <div class="player-head">
@@ -178,6 +188,8 @@
             </div>
 
             <div class="stage-empty" id="stage-empty">
+              <video class="preview-video" id="preview-video" muted autoplay playsinline hidden></video>
+              <p class="preview-badge" id="preview-badge" hidden>Your preview</p>
               <div class="flapline" id="empty-line" data-ch="44" data-cw="28"></div>
               <p id="empty-text"></p>
               <dl class="send-panel" id="send-panel" hidden>
@@ -263,18 +275,106 @@
               <span>Status</span>
             </div>
             <ul class="board" id="people"></ul>
+            <p class="together" id="together" hidden></p>
           </section>
 
           <section class="panel" id="panel-chat" role="tabpanel" aria-labelledby="tab-chat" hidden>
             <ol class="messages" id="messages" aria-live="polite"></ol>
+            <div class="gif-pop" id="gif-pop" hidden>
+              <label class="sr-only" for="gif-search">Search GIFs</label>
+              <input id="gif-search" type="search" placeholder="Search GIFs" autocomplete="off" />
+              <p class="gif-note" id="gif-note" role="status" hidden></p>
+              <div class="gif-grid" id="gif-grid"></div>
+              <p class="gif-credit">Powered by GIPHY</p>
+            </div>
             <form class="composer" id="chat-form" autocomplete="off">
               <label class="sr-only" for="chat-input">Message</label>
-              <input id="chat-input" type="text" maxlength="500" placeholder="Say something to the room" />
+              <button class="icon-btn" id="heart-btn" type="button" aria-label="Send love" title="Send love">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7.5-4.6-7.5-10A4.2 4.2 0 0 1 12 7.5 4.2 4.2 0 0 1 19.500 10c0 5.400-7.500 10-7.500 10z" /></svg>
+              </button>
+              <button class="icon-btn thinking-btn" id="thinking-btn" type="button" hidden>Thinking of you</button>
+              <button class="icon-btn gif-btn" id="gif-btn" type="button" aria-label="Send a GIF" aria-expanded="false" aria-controls="gif-pop">GIF</button>
+              <input id="chat-input" type="text" maxlength="500" placeholder="Message" />
               <button class="btn primary" type="submit">Send</button>
             </form>
           </section>
         </aside>
       </main>
+
+      <div class="sheet" id="settings" hidden>
+        <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+          <header class="sheet-head">
+            <div>
+              <h2 class="sheet-title" id="settings-title">Settings</h2>
+              <p class="sheet-sub">Saved on this device.</p>
+            </div>
+            <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+            </button>
+          </header>
+
+          <div class="set-group">
+            <label class="switch">
+              <input id="nuki-toggle" type="checkbox" />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Nuki Time: love, cuddles and movies</span>
+            </label>
+            <p class="set-hint" id="nuki-hint"></p>
+          </div>
+
+          <div class="set-group">
+            <h3 class="set-title">Microphone</h3>
+            <label class="set-row" for="mic-device"><span>Device</span>
+              <select id="mic-device"><option value="">System default</option></select>
+            </label>
+            <div class="seg" role="radiogroup" aria-label="Microphone mode">
+              <button class="seg-btn" type="button" role="radio" data-mode="always" aria-checked="true">Always on</button>
+              <button class="seg-btn" type="button" role="radio" data-mode="voice" aria-checked="false">Only when I speak</button>
+            </div>
+            <div class="set-row is-voice" id="threshold-row">
+              <span>Sensitivity</span>
+              <div class="meter-wrap">
+                <div class="level" aria-hidden="true"><i id="level-fill"></i><b id="level-mark"></b></div>
+                <input id="threshold" type="range" min="1" max="100" step="1" aria-label="Voice threshold" />
+              </div>
+            </div>
+            <p class="set-hint" id="mic-hint">Press Test to see your level. Move the slider just below where your voice reaches.</p>
+            <button class="btn" id="mic-test" type="button">Test microphone</button>
+          </div>
+
+          <div class="set-group">
+            <h3 class="set-title">Volume while someone talks</h3>
+            <label class="set-row" for="duck"><span>Movie drops to <b id="duck-value">25%</b></span>
+              <input id="duck" type="range" min="0" max="100" step="5" />
+            </label>
+            <p class="set-hint">Phones using iPhone Safari cannot lower the movie. Everything else can.</p>
+          </div>
+
+          <div class="set-group">
+            <h3 class="set-title">Alerts</h3>
+            <label class="switch">
+              <input id="notify-toggle" type="checkbox" />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Notify me of messages and pause requests</span>
+            </label>
+            <label class="switch">
+              <input id="hearts-toggle" type="checkbox" />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Heart animation when someone sends a heart</span>
+            </label>
+            <label class="switch">
+              <input id="sounds-toggle" type="checkbox" />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Play a sound when someone joins or leaves</span>
+            </label>
+            <label class="switch">
+              <input id="preview-toggle" type="checkbox" />
+              <span class="track" aria-hidden="true"><span class="knob"></span></span>
+              <span>Show a preview of my shared screen</span>
+            </label>
+          </div>
+        </div>
+      </div>
 
       <div class="sheet" id="picker" hidden>
         <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="picker-title">

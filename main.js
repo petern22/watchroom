@@ -1,4 +1,4 @@
-const { app, BrowserWindow, desktopCapturer, ipcMain, session, shell, systemPreferences } = require('electron');
+const { app, BrowserWindow, clipboard, desktopCapturer, ipcMain, screen, session, shell, systemPreferences } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { checkForUpdate } = require('./updates');
@@ -93,7 +93,105 @@ function listSources(excludeId) {
     );
 }
 
+let lastHearts = 0;
+
+// Hearts over the whole desktop, on every screen: see-through, click-through windows that never take focus.
+function showHeartOverlays(kind = 'hearts') {
+  const now = Date.now();
+  if (now - lastHearts < 3500) return;
+  lastHearts = now;
+  for (const display of screen.getAllDisplays()) {
+    const overlay = new BrowserWindow({
+      ...display.bounds,
+      transparent: true,
+      frame: false,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      skipTaskbar: true,
+      show: false,
+      webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
+    });
+    overlay.setIgnoreMouseEvents(true);
+    overlay.setAlwaysOnTop(true, 'screen-saver');
+    overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    overlay.webContents.on('will-navigate', (event) => event.preventDefault());
+    overlay.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    overlay.once('ready-to-show', () => overlay.showInactive());
+    overlay.loadFile(path.join(__dirname, 'renderer', 'hearts.html'), { query: { kind } });
+    setTimeout(() => {
+      if (!overlay.isDestroyed()) overlay.destroy();
+    }, 3800);
+  }
+}
+
+let alertWindows = [];
+let alertTimer = null;
+
+function closeAlerts() {
+  clearTimeout(alertTimer);
+  alertWindows.forEach((win) => {
+    if (!win.isDestroyed()) win.destroy();
+  });
+  alertWindows = [];
+}
+
+// A card in the corner of every screen, over the movie, when Watchroom is not the window in front.
+// It cannot be clicked and never takes focus. A newer alert replaces the one showing.
+function showAlertOverlays(title, text) {
+  if (BrowserWindow.getFocusedWindow()) return;
+  closeAlerts();
+  const width = 380;
+  const height = 96;
+  alertWindows = screen.getAllDisplays().map((display) => {
+    const { x, y, width: areaWidth } = display.workArea;
+    const card = new BrowserWindow({
+      x: x + areaWidth - width - 16,
+      y: y + 16,
+      width,
+      height,
+      transparent: true,
+      frame: false,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      skipTaskbar: true,
+      show: false,
+      webPreferences: { contextIsolation: true, sandbox: true },
+    });
+    card.setIgnoreMouseEvents(true);
+    card.setAlwaysOnTop(true, 'screen-saver');
+    card.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    card.webContents.on('will-navigate', (event) => event.preventDefault());
+    card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    card.once('ready-to-show', () => card.showInactive());
+    card.loadFile(path.join(__dirname, 'renderer', 'alert.html'), { query: { title, text } });
+    return card;
+  });
+  alertTimer = setTimeout(closeAlerts, 6000);
+}
+
 function registerIpc() {
+  ipcMain.handle('glow:show', (event) => {
+    assertTrustedEvent(event);
+    showHeartOverlays('glow');
+    return true;
+  });
+
+  ipcMain.handle('alert:show', (event, title, text) => {
+    assertTrustedEvent(event);
+    showAlertOverlays(String(title ?? '').slice(0, 60), String(text ?? '').slice(0, 200));
+    return true;
+  });
+
+  ipcMain.handle('hearts:show', (event) => {
+    assertTrustedEvent(event);
+    showHeartOverlays();
+    return true;
+  });
+
   ipcMain.handle('sources:list', (event) => {
     assertTrustedEvent(event);
     const own = BrowserWindow.fromWebContents(event.sender);
@@ -162,6 +260,14 @@ function registerIpc() {
   });
 
   // Our own room-discovery relay. Used in addition to the public ones, never instead of them.
+  // The page cannot always use the browser clipboard from a file page, so copying goes through here.
+  ipcMain.handle('clipboard:write', (event, text) => {
+    assertTrustedEvent(event);
+    if (typeof text !== 'string' || text.length > 500) throw new Error('Invalid text');
+    clipboard.writeText(text);
+    return true;
+  });
+
   ipcMain.handle('config:relay', (event) => {
     assertTrustedEvent(event);
     return pkg.watchroomRelayUrl || '';
@@ -216,11 +322,11 @@ app.whenReady().then(() => {
   );
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
-    callback(isTrustedContents(webContents) && ['media', 'display-capture', 'fullscreen'].includes(permission));
+    callback(isTrustedContents(webContents) && ['media', 'display-capture', 'fullscreen', 'notifications'].includes(permission));
   });
 
   session.defaultSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) =>
-    isTrustedContents(webContents) && requestingOrigin === 'file://' && ['media', 'display-capture', 'fullscreen'].includes(permission),
+    isTrustedContents(webContents) && requestingOrigin === 'file://' && ['media', 'display-capture', 'fullscreen', 'notifications'].includes(permission),
   );
 
   registerIpc();

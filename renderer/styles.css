@@ -20,6 +20,7 @@
   --alert: #ff7a6b;
   --display: ui-rounded, 'Avenir Next', 'Segoe UI', system-ui, sans-serif;
   --text: 'Avenir Next', 'Segoe UI Variable Text', system-ui, sans-serif;
+  --emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
   color-scheme: dark;
 
   /* Easing tokens. Built-in ease-in feels sluggish for UI, so UI uses these instead. */
@@ -48,6 +49,29 @@ body {
   overflow: hidden;
 }
 
+.ambient-video, .ambient-wash {
+  position: fixed;
+  inset: -5%;
+  width: 110%;
+  height: 110%;
+  pointer-events: none;
+}
+.ambient-video {
+  z-index: 0;
+  object-fit: cover;
+  filter: blur(42px) saturate(1.35);
+  opacity: 0;
+  transition: opacity 700ms ease;
+}
+body.has-ambient .ambient-video { opacity: .85; }
+.ambient-wash {
+  z-index: 1;
+  background: rgba(8, 10, 13, .28);
+  backdrop-filter: blur(22px) saturate(1.15);
+  -webkit-backdrop-filter: blur(22px) saturate(1.15);
+}
+.app { position: relative; z-index: 2; background-color: rgba(11, 12, 13, .38); }
+
 body {
   scrollbar-width: thin;
   scrollbar-color: var(--steel-hi) transparent;
@@ -75,10 +99,10 @@ body {
 /* ---------- shell ---------- */
 
 .app {
-  height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
-  background-color: var(--ground);
+  background-color: rgba(11, 12, 13, .24);
   background-image: repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.012) 0 1px, transparent 1px 3px);
 }
 
@@ -634,6 +658,21 @@ input[type='text']:focus {
   background: #000;
   box-shadow: inset 0 0 0 1px var(--steel-hi), 0 0 0 6px var(--steel), 0 0 0 7px #101214;
   overflow: hidden;
+  box-shadow: inset 0 0 0 1px var(--steel-hi), 0 0 0 6px var(--steel), 0 0 0 7px #101214;
+  isolation: isolate;
+}
+
+.stage::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -36px;
+  background: var(--ambient, transparent);
+  filter: blur(48px) saturate(1.8);
+  opacity: .72;
+  transition: background-color 700ms ease;
+  pointer-events: none;
+  mix-blend-mode: screen;
 }
 
 .screen {
@@ -675,7 +714,9 @@ input[type='text']:focus {
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: var(--ground-2);
+  background: rgba(30, 33, 38, 0.58);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+  backdrop-filter: blur(18px) saturate(125%);
 }
 
 .key {
@@ -782,7 +823,9 @@ input[type='text']:focus {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--ground-2);
+  background: rgba(20, 22, 26, 0.62);
+  -webkit-backdrop-filter: blur(18px) saturate(120%);
+  backdrop-filter: blur(18px) saturate(120%);
   border-left: 1px solid var(--line);
 }
 
@@ -1026,7 +1069,9 @@ input[type='text']:focus {
   padding: 26px 26px 20px;
   border: 1px solid var(--steel-hi);
   border-radius: 8px;
-  background: var(--steel);
+  background: rgba(48, 52, 59, 0.62);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  backdrop-filter: blur(24px) saturate(130%);
   box-shadow: 0 40px 100px rgba(0, 0, 0, 0.6);
   overflow: hidden;
 }
@@ -1596,7 +1641,7 @@ input[type='text']:focus {
 
 .home,
 .room {
-  transition: opacity 260ms var(--ease-out), transform 300ms var(--ease-out);
+  transition: opacity 220ms var(--ease-out), transform 260ms var(--ease-out);
   @starting-style {
     opacity: 0;
     transform: translateY(6px);
@@ -1619,10 +1664,9 @@ input[type='text']:focus {
 }
 
 .screen {
-  transition: opacity 320ms var(--ease-out), filter 320ms var(--ease-out);
+  transition: opacity 220ms var(--ease-out);
   @starting-style {
     opacity: 0;
-    filter: blur(6px);
   }
 }
 
@@ -1634,7 +1678,7 @@ input[type='text']:focus {
 }
 
 .toast {
-  transition: opacity 260ms var(--ease-out), transform 300ms var(--ease-out);
+  transition: opacity 200ms var(--ease-out), transform 240ms var(--ease-out);
   @starting-style {
     opacity: 0;
     transform: translate(-50%, 12px);
@@ -1686,6 +1730,94 @@ input[type='text']:focus {
 }
 
 /* ---------- installed web app ---------- */
+
+/* Small, reversible feedback. No motion is needed for keyboard commands. */
+.btn[aria-busy='true'] {
+  position: relative;
+  cursor: progress;
+  opacity: 1;
+}
+
+.btn[aria-busy='true'] > svg {
+  visibility: hidden;
+}
+
+.btn[aria-busy='true']::after {
+  content: '';
+  position: absolute;
+  right: 18px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: connection-spin 800ms linear infinite;
+}
+
+@keyframes connection-spin {
+  to { transform: rotate(360deg); }
+}
+
+.switch .knob {
+  transition: transform 180ms var(--ease-out);
+}
+
+.btn:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:not(:disabled):hover > svg {
+    transform: translateX(2px);
+  }
+  .source:not(:disabled):hover {
+    transform: translateY(-2px);
+  }
+}
+
+.btn > svg {
+  transition: transform 160ms var(--ease-out);
+}
+
+/* Discrete display transitions preserve hidden semantics and allow exit motion.
+   Older browsers keep the existing immediate hide fallback. */
+@supports (transition-behavior: allow-discrete) {
+  .sheet {
+    transition: opacity 200ms var(--ease-out), display 200ms allow-discrete;
+  }
+  .sheet[hidden] {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .sheet[hidden] .sheet-panel {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  .toast {
+    transition: opacity 200ms var(--ease-out), transform 240ms var(--ease-out), display 240ms allow-discrete;
+  }
+  .toast[hidden] {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+    pointer-events: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ticket {
+    transition: opacity 220ms var(--ease-out) 40ms, transform 260ms var(--ease-out) 40ms;
+    @starting-style {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+  }
+}
+
+html[data-input='keyboard'] *,
+html[data-input='keyboard'] *::before,
+html[data-input='keyboard'] *::after {
+  transition-duration: 0s !important;
+}
 
 html {
   overscroll-behavior: none;
@@ -1886,4 +2018,567 @@ html {
 
 .key[hidden] {
   display: none;
+}
+
+/* Flex keeps a glyph wider than its cell centred. Plain text-align lets it run off the right edge, where it gets cut. */
+.flapline .half > span,
+.flapline .leaf > span {
+  display: flex;
+  justify-content: center;
+}
+
+/* ---------- settings ---------- */
+
+#settings .sheet-panel {
+  width: min(520px, 100%);
+  overflow-y: auto;
+}
+
+.set-group {
+  display: grid;
+  gap: 12px;
+  padding: 18px 0;
+  border-top: 1px solid var(--line);
+}
+
+.set-group:first-of-type {
+  margin-top: 18px;
+}
+
+.set-title {
+  margin: 0;
+  font: 600 12px var(--display);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+
+.set-row select,
+.set-row input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.set-row select {
+  height: 38px;
+}
+
+.set-hint {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#settings .seg {
+  display: flex;
+}
+
+#settings .seg-btn {
+  flex: 1;
+  padding: 0 8px;
+}
+
+.is-voice[hidden],
+#threshold-row[hidden] {
+  display: none;
+}
+
+.meter-wrap {
+  flex: 1;
+  max-width: 260px;
+  display: grid;
+  gap: 6px;
+}
+
+.level {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--flap-lo);
+  box-shadow: inset 0 0 0 1px var(--steel-hi);
+  overflow: hidden;
+}
+
+.level i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0;
+  background: var(--lamp);
+  transition: width 90ms linear;
+}
+
+.level b {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--ink);
+}
+
+/* ---------- gifs ---------- */
+
+.gif-pop {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 76px;
+  z-index: 8;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--steel-hi);
+  border-radius: 8px;
+  background: var(--steel);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+
+.gif-pop[hidden] {
+  display: none;
+}
+
+.gif-pop input {
+  height: 44px;
+}
+
+.gif-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.gif-grid button {
+  height: 96px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: var(--flap-lo);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.gif-grid img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.gif-note,
+.gif-credit {
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.gif-btn {
+  font: 700 12px var(--display);
+}
+
+#heart-btn svg {
+  fill: var(--lamp);
+  stroke: none;
+  width: 20px;
+  height: 20px;
+}
+
+.msg-gif {
+  display: block;
+  max-width: 100%;
+  max-height: 220px;
+  margin-top: 6px;
+  border-radius: 4px;
+}
+
+.msg-text,
+#chat-input {
+  font-family: var(--text), var(--emoji);
+}
+
+/* ---------- alerts on top of the picture (visible in full screen) ---------- */
+
+.stage-alerts {
+  position: absolute;
+  left: 16px;
+  bottom: 74px;
+  z-index: 6;
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  pointer-events: none;
+}
+
+.stage-alerts li {
+  max-width: min(380px, 80vw);
+  padding: 10px 14px;
+  border: 1px solid var(--steel-hi);
+  border-radius: 4px;
+  background: rgba(14, 16, 18, 0.9);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.4;
+  animation: alert-in 220ms var(--ease-out);
+}
+
+.stage-alerts b {
+  display: block;
+  font: 600 11px var(--display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lamp);
+}
+
+@keyframes alert-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+.preview-video {
+  width: min(86%, 560px);
+  max-height: 28vh;
+  margin-bottom: 10px;
+  object-fit: contain;
+  border-radius: 4px;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--steel-hi);
+}
+
+.preview-video[hidden],
+.preview-badge[hidden] {
+  display: none;
+}
+
+.preview-badge {
+  margin: 0 0 14px;
+  color: var(--ink-3);
+  font: 500 11px var(--display);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.hearts {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#panel-chat {
+  position: relative;
+}
+
+/* Controls in the settings sheet follow the theme. */
+#settings input[type='range'] {
+  accent-color: var(--lamp);
+}
+
+#settings select {
+  padding: 0 10px;
+  border: 1px solid var(--steel-hi);
+  border-radius: 4px;
+  background: var(--flap-lo);
+  color: var(--ink);
+  font: inherit;
+}
+
+/* ---------- audit fixes ---------- */
+
+.key,
+.label,
+.who-you {
+  font-size: 12px;
+}
+
+button,
+select,
+input[type='range'] {
+  touch-action: manipulation;
+}
+
+@media (pointer: coarse) {
+  .icon-btn,
+  .player-btn {
+    width: 44px;
+    height: 44px;
+  }
+
+  .chip {
+    height: 44px;
+  }
+
+  /* Below 16px, iPhones zoom the page when a field gets focus. */
+  input,
+  select {
+    font-size: 16px;
+  }
+}
+
+@media (max-width: 820px) {
+  /* The room header has space for the code, copy, settings and status. Install stays on the home screen. */
+  .app[data-view='room'] #update-chip,
+  .app[data-view='room'] .brand {
+    display: none;
+  }
+
+  .room-id {
+    flex: none;
+    gap: 8px;
+  }
+
+  #room-code {
+    zoom: 0.85;
+  }
+
+  .app[data-view='room'] .topbar {
+    gap: 8px;
+  }
+
+  #copy-code {
+    flex: none;
+  }
+
+  .status {
+    min-width: 0;
+    margin-left: auto;
+  }
+}
+
+/* Phone on its side: picture beside the chat, not above it. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .room {
+    grid-template-columns: minmax(0, 1fr) 260px;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .side {
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+
+  .stage-head {
+    display: none;
+  }
+
+  .stage-col {
+    padding: 8px;
+  }
+
+  .dock {
+    margin-top: 8px;
+    padding: 4px;
+  }
+
+  .key-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+/* ---------- sharer preview: the picture fills the stage, details appear on hover or tap ---------- */
+
+.stage-empty.is-previewing {
+  display: block;
+  padding: 0;
+  background: #000;
+}
+
+.is-previewing .preview-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  margin: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.is-previewing #empty-line,
+.is-previewing #empty-text {
+  display: none;
+}
+
+.is-previewing .preview-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: rgba(8, 9, 10, 0.82);
+}
+
+.is-previewing .send-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 14px 16px;
+  border-top: 1px solid var(--line);
+  background: rgba(8, 9, 10, 0.86);
+  text-align: left;
+}
+
+.is-previewing .preview-badge,
+.is-previewing .send-panel {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.stage.show-controls .is-previewing .preview-badge,
+.stage.show-controls .is-previewing .send-panel,
+.stage:hover .is-previewing .preview-badge,
+.stage:hover .is-previewing .send-panel,
+.stage:focus-within .is-previewing .send-panel {
+  opacity: 1;
+}
+
+/* ---------- composer: the message gets the full width, tools sit below ---------- */
+
+.composer {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.composer input {
+  order: 1;
+  flex: 1 1 0;
+}
+
+.composer .btn {
+  order: 2;
+  flex: none;
+  padding: 0 18px;
+}
+
+.composer .icon-btn {
+  order: 3;
+}
+
+.composer::after {
+  content: '';
+  order: 2;
+  flex-basis: 100%;
+}
+
+#gif-search {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid var(--steel-hi);
+  border-radius: 4px;
+  background: var(--flap-lo);
+  color: var(--ink);
+  font: 15px var(--text);
+  appearance: none;
+}
+
+/* ---------- Nuki Time ---------- */
+
+.app.is-nuki {
+  --lamp: #ff6f9c;
+  --lamp-ink: #2a0614;
+  --lamp-soft: rgba(255, 111, 156, 0.16);
+}
+
+.icon-btn.thinking-btn {
+  order: 4;
+  width: auto;
+  padding: 0 12px;
+  color: var(--lamp);
+  font: 600 13px var(--text);
+}
+
+.thinking-btn[hidden],
+.together[hidden] {
+  display: none;
+}
+
+.together {
+  margin: 0;
+  padding: 16px 24px;
+  color: var(--lamp);
+  font-size: 14px;
+}
+
+/* Frosted surfaces: the live backdrop supplies color through the glass. */
+:root {
+  --glass-fill: rgba(17, 21, 29, .38);
+  --glass-edge: rgba(255, 255, 255, .22);
+  --glass-shadow: inset 0 1px 0 rgba(255, 255, 255, .23),
+    inset 1px 0 0 rgba(255, 255, 255, .06),
+    inset 0 -1px 0 rgba(255, 255, 255, .07),
+    0 12px 36px rgba(0, 0, 0, .2);
+}
+
+.ticket,
+.dock,
+.side,
+.sheet-panel,
+.player,
+.send-panel,
+.gif-pop,
+.toast {
+  background: linear-gradient(135deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .015) 55%), var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  border-radius: 20px;
+  box-shadow: var(--glass-shadow);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(150%);
+}
+
+.topbar {
+  background: rgba(16, 19, 26, .28);
+  border-bottom-color: rgba(255, 255, 255, .14);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+
+.side {
+  margin: 20px 18px 18px 0;
+  overflow: hidden;
+}
+
+.tabs, .board > li, .sheet-head {
+  border-color: rgba(255, 255, 255, .12);
+}
+
+.sheet {
+  background: rgba(4, 5, 8, .4);
+}
+
+.send-panel { padding: 16px; }
+
+/* Retain a legible surface when backdrop blur is unavailable. */
+@supports not (backdrop-filter: blur(1px)) {
+  .ticket, .dock, .side, .sheet-panel, .player, .send-panel, .gif-pop, .toast {
+    background-color: rgba(23, 27, 35, .94);
+  }
+}
+
+@media (max-width: 820px) {
+  .side { margin: 0 12px 12px; border-radius: 16px; }
+  .dock, .sheet-panel { border-radius: 16px; }
 }

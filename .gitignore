@@ -1,6 +1,7 @@
 node_modules/
 release/
 renderer/bundle.js
+renderer/hearts-bundle.js
 .impeccable/
 .DS_Store
 dist-web/

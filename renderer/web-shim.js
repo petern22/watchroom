@@ -35,6 +35,22 @@ if (!window.watchroom) {
       }
       return [];
     },
+    copyText: async (text) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Older browsers and some embedded views: select a hidden field and copy it.
+        const field = document.createElement('textarea');
+        field.value = text;
+        field.style.cssText = 'position:fixed;opacity:0';
+        document.body.append(field);
+        field.select();
+        const ok = document.execCommand('copy');
+        field.remove();
+        return ok;
+      }
+    },
     relayUrl: async () => 'wss://watchroom-relay.peterndrio.workers.dev',
     forceRelay: async () => false,
   };

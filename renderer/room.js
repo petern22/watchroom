@@ -1,7 +1,7 @@
 import { getRelays } from '@trystero-p2p/core';
 import { defaultRelayUrls, joinRoom } from 'trystero/nostr';
 import { lossPercent, megabitsPerSecond } from './meters.mjs';
-import { CODE_LENGTH, MAX_PEERS, nextSpeaking, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode, normalizeProfile } from './room-policy.mjs';
+import { CODE_LENGTH, MAX_PEERS, cleanGifUrl, levelFromSlider, nextSpeaking, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode, normalizeProfile } from './room-policy.mjs';
 
 export { CODE_LENGTH, MAX_PEERS, PRESETS, UPLOAD_BUDGET_BPS, bitrateFor, cleanCode, newRoomCode } from './room-policy.mjs';
 
@@ -68,6 +68,9 @@ export function openRoom(code, name, on, options = {}) {
   const chatAction = room.makeAction('chat');
   const capacityAction = room.makeAction('capacity');
   const requestAction = room.makeAction('request');
+  const nukiAction = room.makeAction('nuki');
+  const thinkingAction = room.makeAction('thinking');
+  let nukiOn = false;
 
   let audioCtx = null;
   const me = { id: 'me', name: cleanName(name), mic: false, sharing: false, label: '', speaking: false, you: true };
@@ -76,6 +79,8 @@ export function openRoom(code, name, on, options = {}) {
   const audioEls = new Map();
 
   let micStream = null;
+  let micMeterStream = null;
+  let micOpts = { mode: 'always', threshold: levelFromSlider(25), deviceId: '' };
   let micPending = false;
   let sharePending = false;
   let screenStream = null;
@@ -371,11 +376,15 @@ export function openRoom(code, name, on, options = {}) {
       let level = Math.sqrt(sum / buf.length);
       const who = id === 'me' ? me : peers.get(id);
       if (!who) return;
+      if (id === 'me') on.micLevel?.(level);
       // The receiver reports its own audio level too. It works even while the audio context is still asleep.
       if (id !== 'me') level = Math.max(level, receiverLevel(id));
       const live = id === 'me' ? me.mic : who.mic;
-      const next = nextSpeaking({ level: live ? level : 0, speaking: who.speaking, loudAt: who.loudAt || 0, now: Date.now() });
+      const on_ = id === 'me' ? micOpts.threshold : undefined;
+      const next = nextSpeaking({ level: live ? level : 0, speaking: who.speaking, loudAt: who.loudAt || 0, now: Date.now(), on: on_ });
       who.loudAt = next.loudAt;
+      // Voice mode: the microphone only carries sound while you are talking.
+      if (id === 'me') applyMicGate(next.speaking);
       if (next.speaking !== who.speaking) {
         who.speaking = next.speaking;
         emitPeers();
@@ -436,7 +445,10 @@ export function openRoom(code, name, on, options = {}) {
     const wasNew = !p.joined;
     p.name = cleanName(data?.name);
     p.joined = true;
-    if (wasNew) on.system(`${p.name} joined`);
+    if (wasNew) {
+      on.system(`${p.name} joined`);
+      on.presence?.('join');
+    }
     emitPeers();
   };
 
@@ -465,6 +477,7 @@ export function openRoom(code, name, on, options = {}) {
       id: clip(data?.id, 64) || crypto.randomUUID(),
       name: p.name,
       text: clip(data?.text, 500),
+      gif: cleanGifUrl(data?.gif),
       at: now,
       self: false,
     });
@@ -478,6 +491,21 @@ export function openRoom(code, name, on, options = {}) {
     if (now - (p.lastRequestAt || 0) < REQUEST_GAP_MS) return;
     p.lastRequestAt = now;
     on.request?.({ name: p.name, kind: data.kind, self: false });
+  };
+
+  // The room's creator decides Nuki Time for everyone. Friends trust each other here: there is no server to prove who created it.
+  nukiAction.onMessage = (data, { peerId }) => {
+    if (options.host || typeof data?.on !== 'boolean') return;
+    on.nuki?.(data.on, peers.get(peerId)?.name || 'Someone');
+  };
+
+  thinkingAction.onMessage = (_data, { peerId }) => {
+    const p = peers.get(peerId);
+    if (!p) return;
+    const now = Date.now();
+    if (now - (p.lastThinkingAt || 0) < REQUEST_GAP_MS) return;
+    p.lastThinkingAt = now;
+    on.thinking?.(p.name);
   };
 
   capacityAction.onMessage = (data) => {
@@ -501,6 +529,7 @@ export function openRoom(code, name, on, options = {}) {
       if (pc.connectionState === 'connected') on.status('live');
     });
     ensurePeer(peerId);
+    if (options.host) Promise.resolve(nukiAction.send({ on: nukiOn }, { target: peerId })).catch(() => {});
     clearTimeout(waitTimer);
     on.status('live');
     helloAction.send({ name: me.name }, { target: peerId });
@@ -516,7 +545,10 @@ export function openRoom(code, name, on, options = {}) {
     peers.delete(peerId);
     sendState.delete(peerId);
     dropAudio(peerId);
-    if (p?.joined) on.system(`${p.name} left`);
+    if (p?.joined) {
+      on.system(`${p.name} left`);
+      on.presence?.('leave');
+    }
     if (stageId === peerId) setStage(null, null, null);
     if (peers.size === 0 && !closed) on.status('waiting');
     emitPeers();
@@ -542,14 +574,83 @@ export function openRoom(code, name, on, options = {}) {
 
   // ---- local actions ----
 
+  async function openMic(deviceId) {
+    const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+    if (deviceId) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({ audio: { ...base, deviceId: { exact: deviceId } } });
+      } catch {
+        /* the chosen microphone is gone; fall back to the default one */
+      }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio: base });
+  }
+
+  // Level and speaking come from a copy of the microphone, so they still work while the real one is muted.
+  function startMicMeter() {
+    stopMicMeter();
+    micMeterStream = new MediaStream(micStream.getAudioTracks().map((track) => track.clone()));
+    micMeterStream.getAudioTracks().forEach((track) => {
+      track.enabled = true;
+    });
+    meter('me', micMeterStream);
+  }
+
+  function stopMicMeter() {
+    stopMeter('me');
+    micMeterStream?.getTracks().forEach((track) => track.stop());
+    micMeterStream = null;
+  }
+
+  function applyMicGate(speaking) {
+    if (!micStream) return;
+    const open = me.mic && (micOpts.mode === 'always' || speaking);
+    micStream.getAudioTracks().forEach((track) => {
+      if (track.enabled !== open) track.enabled = open;
+    });
+  }
+
+  // Mode, threshold and microphone choice. A new device replaces the live microphone without leaving the room.
+  async function setMicOptions(opts = {}) {
+    const deviceChanged = opts.deviceId !== undefined && opts.deviceId !== micOpts.deviceId;
+    micOpts = {
+      mode: opts.mode === 'voice' ? 'voice' : opts.mode === 'always' ? 'always' : micOpts.mode,
+      threshold: opts.threshold ?? micOpts.threshold,
+      deviceId: opts.deviceId ?? micOpts.deviceId,
+    };
+    if (deviceChanged && micStream && !micPending) {
+      micPending = true;
+      let next;
+      try {
+        next = await openMic(micOpts.deviceId);
+      } catch {
+        on.error('That microphone could not be opened.');
+      } finally {
+        micPending = false;
+      }
+      if (next && !closed) {
+        const old = micStream;
+        room.removeStream(old);
+        old.getTracks().forEach((track) => track.stop());
+        micStream = next;
+        micStream.getAudioTracks().forEach((track) => {
+          track.enabled = false;
+        });
+        addMedia(micStream, { kind: 'mic' });
+        startMicMeter();
+      } else if (next) {
+        next.getTracks().forEach((track) => track.stop());
+      }
+    }
+    applyMicGate(me.speaking);
+  }
+
   async function startMic() {
     if (closed || micPending) return false;
     if (micStream) return true;
     micPending = true;
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-      });
+      micStream = await openMic(micOpts.deviceId);
     } catch {
       on.error('Microphone is unavailable. You can still watch and chat.');
       return false;
@@ -565,7 +666,7 @@ export function openRoom(code, name, on, options = {}) {
       track.enabled = false;
     });
     addMedia(micStream, { kind: 'mic' });
-    meter('me', micStream);
+    startMicMeter();
     announce();
     emitPeers();
     return true;
@@ -574,9 +675,7 @@ export function openRoom(code, name, on, options = {}) {
   async function toggleMic() {
     if (!micStream && !(await startMic())) return me.mic;
     me.mic = !me.mic;
-    micStream.getAudioTracks().forEach((track) => {
-      track.enabled = me.mic;
-    });
+    applyMicGate(me.speaking);
     announce();
     emitPeers();
     return me.mic;
@@ -616,9 +715,10 @@ export function openRoom(code, name, on, options = {}) {
     }
     me.sharing = true;
     // In a browser there is no name from our own picker, so use what the browser reports. Skip its internal ids.
-    const trackName = screenTrack?.label && !screenTrack.label.includes('://') ? screenTrack.label : '';
+    const trackName = screenTrack?.label && !/:\/\/|^(window|screen|web-contents-media-stream):/.test(screenTrack.label) ? screenTrack.label : '';
     me.label = clip(label, 60) || clip(trackName, 60) || 'Shared screen';
     addMedia(screenStream, { kind: 'screen', label: me.label });
+    on.preview?.(stream);
     applySenderParams();
     startAdapting();
     announce();
@@ -637,6 +737,7 @@ export function openRoom(code, name, on, options = {}) {
     stream.getTracks().forEach((track) => track.stop());
     me.sharing = false;
     me.label = '';
+    on.preview?.(null);
     announce();
     emitPeers();
   }
@@ -647,6 +748,27 @@ export function openRoom(code, name, on, options = {}) {
     const msg = { id: crypto.randomUUID(), name: me.name, text: body, at: Date.now() };
     chatAction.send(msg);
     on.chat({ ...msg, self: true });
+  }
+
+  function sendGif(url, title) {
+    const gif = cleanGifUrl(url);
+    if (!gif) return;
+    // The text is the title, so older versions still show something readable.
+    const msg = { id: crypto.randomUUID(), name: me.name, text: clip(title, 80) || 'GIF', gif, at: Date.now() };
+    chatAction.send(msg);
+    on.chat({ ...msg, self: true });
+  }
+
+  function setNuki(value) {
+    if (!options.host) return;
+    nukiOn = Boolean(value);
+    Promise.resolve(nukiAction.send({ on: nukiOn })).catch(() => {});
+  }
+
+  function sendThinking() {
+    if (peers.size === 0) return false;
+    Promise.resolve(thinkingAction.send({})).catch(() => {});
+    return true;
   }
 
   function sendRequest(kind) {
@@ -665,6 +787,7 @@ export function openRoom(code, name, on, options = {}) {
     stopShare();
     stopWatching();
     if (micStream) micStream.getTracks().forEach((track) => track.stop());
+    stopMicMeter();
     micStream = null;
     for (const id of [...meters.keys()]) stopMeter(id);
     for (const id of [...audioEls.keys()]) dropAudio(id);
@@ -683,7 +806,11 @@ export function openRoom(code, name, on, options = {}) {
     startShare,
     stopShare,
     sendChat,
+    sendGif,
     sendRequest,
+    setNuki,
+    sendThinking,
+    setMicOptions,
     leave,
     // Phones keep audio asleep until a touch. Called from a tap, it starts everything that was blocked.
     unlockAudio() {

@@ -8,10 +8,16 @@ const HALF_MS = 46;
 
 const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+function put(span, ch) {
+  span.textContent = ch;
+  span.dataset.g = ch;
+}
+
 function leaf(part, ch) {
   const el = document.createElement('div');
   el.className = `leaf leaf-${part}`;
-  el.innerHTML = `<span>${ch}</span>`;
+  el.innerHTML = '<span></span>';
+  put(el.firstChild, ch);
   return el;
 }
 
@@ -31,10 +37,10 @@ function flipOnce(cell, ch) {
   const from = cell.dataset.ch || ' ';
   const top = cell.querySelector('.top > span');
   const bottom = cell.querySelector('.bottom > span');
-  top.textContent = ch;
+  put(top, ch);
 
   if (reduceMotion.matches) {
-    bottom.textContent = ch;
+    put(bottom, ch);
     cell.dataset.ch = ch;
     return Promise.resolve();
   }
@@ -48,7 +54,7 @@ function flipOnce(cell, ch) {
     )
     .finished.then(() => {
       fall.remove();
-      bottom.textContent = ch;
+      put(bottom, ch);
       cell.dataset.ch = ch;
       const rise = leaf('bottom', ch);
       cell.append(rise);
@@ -92,6 +98,18 @@ export function mountFlapLine(el, length) {
   }
 }
 
+const ruler = document.createElement('canvas').getContext('2d');
+
+// A tile grows to fit a wide letter like W, so the letter keeps its real shape and weight.
+function fitTile(el, cell, ch) {
+  const style = getComputedStyle(el);
+  const size = parseFloat(style.getPropertyValue('--fs'));
+  ruler.font = `600 ${size}px ${style.fontFamily}`;
+  const base = parseFloat(style.getPropertyValue('--cw'));
+  const needed = Math.ceil(ruler.measureText(ch).width + size * 0.08);
+  cell.style.width = needed > base ? `${needed}px` : '';
+}
+
 // Sets the text. Only cells whose character changes move. Each one cascades in from the left.
 export function setFlap(el, text, { stagger = 38, instant = false } = {}) {
   if (!el || !el._length) return;
@@ -104,13 +122,14 @@ export function setFlap(el, text, { stagger = 38, instant = false } = {}) {
   const cells = el.querySelectorAll('.cell');
   cells.forEach((cell, i) => {
     const target = value[i];
+    fitTile(el, cell, target);
     if (!instant && cell.dataset.ch === target) return;
     cell._token = (cell._token || 0) + 1;
     const token = cell._token;
     if (instant || reduceMotion.matches) {
       cell.dataset.ch = target;
-      cell.querySelector('.top > span').textContent = target;
-      cell.querySelector('.bottom > span').textContent = target;
+      put(cell.querySelector('.top > span'), target);
+      put(cell.querySelector('.bottom > span'), target);
       return;
     }
     setTimeout(() => runFlip(cell, target, token), i * stagger);

@@ -2,6 +2,8 @@ import './web-shim.js';
 import { mountFlapLine, setFlap } from './flap.js';
 import { LEVEL_WORDS, delayLevel, limitWords, overallLevel, pictureName, smoothnessLevel, speedLevel } from './meters.mjs';
 import { createAttemptGate } from './room-policy.mjs';
+import { DEFAULT_SETTINGS, formatTogether, glowPulse, heartBurst, isHeart, loadTogether, saveTogether, playChime, loadSettings, saveSettings, searchGifs, stageAlert, systemNotify } from './extras.js';
+import { levelFromSlider, sliderFromLevel } from './room-policy.mjs';
 import { CODE_LENGTH, PRESETS, bitrateFor, cleanCode, newRoomCode, openRoom } from './room.js';
 
 // Screen wiring: home, room, source picker, chat and the flap board.
@@ -11,6 +13,7 @@ const $ = (id) => document.getElementById(id);
 const CODE_PATTERN = /^[ABCDEFGHJKMNPQRSTUVWXYZ2-9]{6}$/;
 const NAME_KEY = 'watchroom.name';
 const roomAttempts = createAttemptGate();
+let settings = loadSettings();
 const STATUS_TEXT = {
   ready: 'Ready',
   connecting: 'Connecting',
@@ -23,6 +26,9 @@ const STATUS_TEXT = {
 
 const state = {
   askedPause: false,
+  isHost: false,
+  roomNuki: false,
+  preview: null,
   session: null,
   code: '',
   view: 'home',
@@ -193,7 +199,13 @@ function readName() {
   return $('name').value.trim().slice(0, 24);
 }
 
-async function startRoom(code) {
+function micOptionsFrom(s) {
+  return { mode: s.micMode, threshold: levelFromSlider(s.threshold), deviceId: s.micDevice };
+}
+
+async function startRoom(code, host = false) {
+  // Asked here, straight from the button press, because browsers only allow the question after a click.
+  if (settings.notify) askNotificationPermission();
   const attempt = roomAttempts.begin();
   const name = readName();
   if (!name) {
@@ -203,9 +215,27 @@ async function startRoom(code) {
   }
   hideHomeError();
   saveName(name);
-  const turn = await window.watchroom.turnServers();
-  const forceRelay = await window.watchroom.forceRelay();
-  const relayUrl = await window.watchroom.relayUrl();
+  setStatus('connecting');
+  const buttons = [$('create-room'), $('join-form').querySelector('button')];
+  const activeButton = host ? buttons[0] : buttons[1];
+  buttons.forEach((button) => { button.disabled = true; });
+  activeButton.setAttribute('aria-busy', 'true');
+  let turn, forceRelay, relayUrl;
+  try {
+    [turn, forceRelay, relayUrl] = await Promise.all([
+      window.watchroom.turnServers(), window.watchroom.forceRelay(), window.watchroom.relayUrl(),
+    ]);
+  } catch {
+    if (roomAttempts.isCurrent(attempt)) {
+      setStatus('error');
+      showHomeError('Could not prepare the connection. Please try again.');
+    }
+    return;
+  } finally {
+    if (roomAttempts.isCurrent(attempt)) {
+      buttons.forEach((button) => { button.disabled = false; button.removeAttribute('aria-busy'); });
+    }
+  }
   if (!roomAttempts.isCurrent(attempt)) return;
   if (state.session) leaveRoom();
 
@@ -220,12 +250,17 @@ async function startRoom(code) {
   $('people').replaceChildren();
   updateStage();
 
-  const session = openRoom(code, name, handlers, { turnConfig: turn, forceRelay, relayUrl });
+  const session = openRoom(code, name, handlers, { turnConfig: turn, forceRelay, relayUrl, host });
   state.session = session;
+  session.setMicOptions(micOptionsFrom(settings));
+  state.isHost = host;
+  state.roomNuki = false;
+  if (host) session.setNuki(settings.nuki);
+  applyNuki();
 }
 
 function onCreate() {
-  startRoom(newRoomCode());
+  startRoom(newRoomCode(), true);
 }
 
 function onJoin(event) {
@@ -303,6 +338,32 @@ function updateStage() {
   const me = state.peers.find((p) => p.you);
   const remoteSharer = state.peers.find((p) => !p.you && p.sharing);
   const video = $('screen');
+  const ambientVideo = $('ambient-video');
+  const ambientStream = state.remote?.stream || (me?.sharing ? state.preview : null);
+  if (ambientVideo && ambientVideo.srcObject !== ambientStream) {
+    ambientVideo.srcObject = ambientStream;
+    if (ambientStream) ambientVideo.play().catch(() => {});
+  }
+  document.body.classList.toggle('has-ambient', Boolean(ambientStream));
+  if (!video._ambientTimer) {
+    const sample = document.createElement('canvas');
+    sample.width = sample.height = 8;
+    const ctx = sample.getContext('2d', { willReadFrequently: true });
+    video._ambientTimer = setInterval(() => {
+      const source = state.remote ? video : $('preview-video');
+      if (!source.srcObject || source.readyState < 2 || !ctx) {
+        $('stage').style.removeProperty('--ambient');
+        return;
+      }
+      try {
+        ctx.drawImage(source, 0, 0, 8, 8);
+        const px = ctx.getImageData(0, 0, 8, 8).data;
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
+        $('stage').style.setProperty('--ambient', `rgb(${r >> 6}, ${g >> 6}, ${b >> 6})`);
+      } catch { $('stage').style.removeProperty('--ambient'); }
+    }, 500);
+  }
   const empty = $('stage-empty');
   const emptyText = $('empty-text');
 
@@ -331,12 +392,23 @@ function updateStage() {
       emptyText.textContent = `${remoteSharer.name} is showing ${remoteSharer.label}. The picture is on its way.`;
       title = remoteSharer.label;
     } else {
-      setFlap($('empty-line'), 'NOTHING SHOWING');
-      emptyText.textContent = 'Press Share screen to put a movie, a browser tab or a window on the board.';
+      setFlap($('empty-line'), nukiActive() ? 'NUKI TIME' : 'NOTHING SHOWING');
+      emptyText.textContent = nukiActive()
+        ? 'Pick something to watch together, then press Share screen.'
+        : 'Press Share screen to put a movie, a browser tab or a window on the board.';
     }
   }
 
-  setFlap($('now-title'), title || 'STANDING BY');
+  // The sharer sees what the room sees, small, above the send details.
+  const pv = $('preview-video');
+  const previewing = !state.remote && Boolean(me?.sharing && state.preview && settings.preview);
+  if (previewing && pv.srcObject !== state.preview) pv.srcObject = state.preview;
+  if (!previewing) pv.srcObject = null;
+  pv.hidden = !previewing;
+  empty.classList.toggle('is-previewing', previewing);
+  $('preview-badge').hidden = !previewing;
+
+  setFlap($('now-title'), title || (nukiActive() ? 'NUKI TIME' : 'STANDING BY'));
   trackClock(Boolean(title));
 }
 
@@ -368,14 +440,38 @@ function addChat(msg) {
   const li = el('li', 'msg');
   const head = el('div', 'msg-head');
   head.append(el('span', msg.self ? 'msg-name is-you' : 'msg-name', msg.name), el('time', 'msg-time', formatTime(msg.at)));
-  li.append(head, el('p', 'msg-text', msg.text));
+  if (msg.gif) {
+    const img = el('img', 'msg-gif');
+    img.src = msg.gif;
+    img.alt = msg.text;
+    img.addEventListener('load', () => {
+      list.scrollTop = list.scrollHeight;
+    });
+    li.append(head, img);
+  } else {
+    li.append(head, el('p', 'msg-text', msg.text));
+  }
   list.append(li);
+  if (settings.hearts && !msg.gif && isHeart(msg.text)) {
+    // The desktop app can draw over the movie in other windows. A browser can only draw inside its own page.
+    playHearts();
+  }
+  if (!msg.self) alertUser(msg.name, msg.gif ? 'Sent a GIF' : msg.text);
   while (list.childElementCount > 250) list.firstElementChild.remove();
   list.scrollTop = list.scrollHeight;
   if (state.tab !== 'chat') {
     state.unread += 1;
     renderUnread();
   }
+}
+
+// Messages and requests reach you even when the movie is full screen, or when another window is in front.
+function alertUser(title, text) {
+  if (!settings.notify) return;
+  if (window.watchroom.showAlert) window.watchroom.showAlert(title, text).catch(() => systemNotify(title, text));
+  else systemNotify(title, text);
+  const stage = $('stage');
+  if (document.fullscreenElement === stage || stage.classList.contains('pseudo-fs')) stageAlert($('stage-alerts'), title, text);
 }
 
 function addSystem(text) {
@@ -548,6 +644,31 @@ const handlers = {
   },
   chat: addChat,
   system: addSystem,
+  nuki(on, name) {
+    if (on === state.roomNuki) return;
+    state.roomNuki = on;
+    applyNuki();
+    addSystem(on ? 'Nuki Time is on.' : 'Nuki Time is off.');
+    if (on && settings.hearts) playHearts();
+  },
+  thinking(name) {
+    if (!nukiActive()) return;
+    if (window.watchroom.showGlow) window.watchroom.showGlow().catch(glowPulse);
+    else glowPulse();
+    const text = `${name} is thinking of you`;
+    addSystem(`${text}.`);
+    alertUser('Nuki Time', text);
+  },
+  presence(kind) {
+    if (settings.sounds) playChime(kind);
+  },
+  micLevel(level) {
+    $('level-fill').style.width = `${sliderFromLevel(level)}%`;
+  },
+  preview(stream) {
+    state.preview = stream;
+    updateStage();
+  },
   request({ name, kind, self }) {
     const sharer = state.peers.find((p) => p.sharing && !p.you)?.name;
     const text =
@@ -555,7 +676,10 @@ const handlers = {
         ? `${self ? 'You ask' : `${name} asks`} to pause${sharer && !self ? `. Only ${sharer} can press pause` : ''}.`
         : `${self ? 'You are' : `${name} is`} ready to continue.`;
     addSystem(text);
-    if (!self) toast(text);
+    if (!self) {
+      toast(text);
+      alertUser(name, text);
+    }
   },
   screen(stream, info) {
     state.remote = stream ? { stream, info } : null;
@@ -642,7 +766,7 @@ function showPlayerControls() {
 // The movie's volume follows the slider, and drops to 30% while someone in the room is talking.
 function applyVolume() {
   const base = Number($('volume').value) / 100;
-  $('screen').volume = state.ducked ? base * 0.3 : base;
+  $('screen').volume = state.ducked ? base * (settings.duck / 100) : base;
 }
 
 function setMuted(muted) {
@@ -699,6 +823,8 @@ function leaveRoom() {
   roomAttempts.cancel();
   const session = state.session;
   state.session = null;
+  state.isHost = false;
+  state.roomNuki = false;
   state.remote = null;
   state.peers = [];
   state.unread = 0;
@@ -708,6 +834,8 @@ function leaveRoom() {
     state.clockTimer = null;
   }
   $('screen').srcObject = null;
+  $('ambient-video').srcObject = null;
+  document.body.classList.remove('has-ambient');
   $('picker').hidden = true;
   renderUnread();
   selectTab('people');
@@ -730,13 +858,13 @@ function onShareClick() {
   openPicker();
 }
 
-function onCopy() {
+async function onCopy() {
   if (!state.code) return;
   // In a browser, copy a link friends can open to join straight away. On the desktop, copy the code.
   const web = window.watchroom.isWeb;
   const text = web ? `${location.origin}${location.pathname}#join=${state.code}` : state.code;
-  navigator.clipboard?.writeText(text).catch(() => {});
-  $('copy-label').textContent = 'Copied';
+  const copied = await window.watchroom.copyText(text).catch(() => false);
+  $('copy-label').textContent = copied ? 'Copied' : 'Copy failed';
   clearTimeout(state.copyTimer);
   state.copyTimer = setTimeout(() => {
     $('copy-label').textContent = web ? 'Copy link' : 'Copy code';
@@ -828,7 +956,203 @@ function handleInvite(code) {
 
 // ---------- boot ----------
 
+// ---------- settings and emoji ----------
+
+// Inside someone else's room, their choice applies. Otherwise your own.
+function nukiActive() {
+  return state.session && !state.isHost ? state.roomNuki : settings.nuki;
+}
+
+function applyNuki() {
+  const on = Boolean(nukiActive());
+  $('app').classList.toggle('is-nuki', on);
+  $('thinking-btn').hidden = !on;
+  $('together').hidden = !on;
+  $('together').textContent = formatTogether(loadTogether());
+  syncSettingsForm();
+  updateStage();
+}
+
+function playHearts() {
+  // The desktop app can draw over the movie in other windows. A browser can only draw inside its own page.
+  if (window.watchroom.showHearts) window.watchroom.showHearts().catch(heartBurst);
+  else heartBurst();
+}
+
+// Counts only time actually spent together: Nuki Time on, and someone else in the room.
+const TOGETHER_TICK_S = 30;
+function tickTogether() {
+  if (!state.session || !nukiActive() || !state.peers.some((p) => !p.you)) return;
+  const total = loadTogether() + TOGETHER_TICK_S;
+  saveTogether(total);
+  $('together').textContent = formatTogether(total);
+}
+
+function syncSettingsForm() {
+  $('duck').value = settings.duck;
+  $('duck-value').textContent = `${settings.duck}%`;
+  $('threshold').value = settings.threshold;
+  $('level-mark').style.left = `${settings.threshold}%`;
+  $('notify-toggle').checked = settings.notify;
+  $('hearts-toggle').checked = settings.hearts;
+  $('preview-toggle').checked = settings.preview;
+  $('sounds-toggle').checked = settings.sounds;
+  const guest = Boolean(state.session && !state.isHost);
+  $('nuki-toggle').checked = nukiActive();
+  $('nuki-toggle').disabled = guest;
+  $('nuki-hint').textContent = guest
+    ? 'Only the person who created this room can change this.'
+    : 'Turns on for everyone in rooms you create.';
+  $('threshold-row').hidden = settings.micMode !== 'voice';
+  document.querySelectorAll('#settings [data-mode]').forEach((b) => {
+    b.setAttribute('aria-checked', String(b.dataset.mode === settings.micMode));
+  });
+}
+
+async function refreshMicDevices() {
+  const select = $('mic-device');
+  try {
+    const devices = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput' && d.deviceId);
+    select.replaceChildren(new Option('System default', ''));
+    devices.forEach((d, i) => {
+      if (d.deviceId !== 'default') select.append(new Option(d.label || `Microphone ${i + 1}`, d.deviceId));
+    });
+    select.value = [...select.options].some((o) => o.value === settings.micDevice) ? settings.micDevice : '';
+  } catch {
+    /* no device list in this browser; the default microphone is used */
+  }
+}
+
+function changeSettings(patch) {
+  settings = { ...settings, ...patch };
+  saveSettings(settings);
+  state.session?.setMicOptions(micOptionsFrom(settings));
+  applyVolume();
+  updateStage();
+  syncSettingsForm();
+}
+
+function openSettings() {
+  syncSettingsForm();
+  $('settings').hidden = false;
+  refreshMicDevices();
+  $('settings-close').focus();
+}
+
+function closeSettings() {
+  $('settings').hidden = true;
+  $('settings-btn').focus();
+}
+
+async function askNotificationPermission() {
+  if (typeof Notification === 'undefined') return 'denied';
+  if (Notification.permission === 'default') return Notification.requestPermission().catch(() => 'denied');
+  return Notification.permission;
+}
+
+function setupSettings() {
+  syncSettingsForm();
+  $('settings-btn').addEventListener('click', openSettings);
+  $('settings-close').addEventListener('click', closeSettings);
+  $('settings').addEventListener('click', (event) => {
+    if (event.target === $('settings')) closeSettings();
+  });
+  $('mic-device').addEventListener('change', (event) => changeSettings({ micDevice: event.target.value }));
+  document.querySelectorAll('#settings [data-mode]').forEach((b) => {
+    b.addEventListener('click', () => changeSettings({ micMode: b.dataset.mode }));
+  });
+  $('threshold').addEventListener('input', (event) => changeSettings({ threshold: Number(event.target.value) }));
+  $('duck').addEventListener('input', (event) => changeSettings({ duck: Number(event.target.value) }));
+  $('hearts-toggle').addEventListener('change', (event) => changeSettings({ hearts: event.target.checked }));
+  $('nuki-toggle').addEventListener('change', (event) => {
+    changeSettings({ nuki: event.target.checked });
+    state.session?.setNuki(settings.nuki);
+    applyNuki();
+    if (settings.nuki && settings.hearts) playHearts();
+  });
+  $('sounds-toggle').addEventListener('change', (event) => changeSettings({ sounds: event.target.checked }));
+  $('preview-toggle').addEventListener('change', (event) => changeSettings({ preview: event.target.checked }));
+  $('notify-toggle').addEventListener('change', async (event) => {
+    if (event.target.checked && (await askNotificationPermission()) !== 'granted') {
+      toast('Notifications are blocked. Allow them for Watchroom in your system or browser settings.', true);
+    }
+    changeSettings({ notify: event.target.checked });
+  });
+  $('mic-test').addEventListener('click', async () => {
+    if (!state.session) {
+      toast('Join a room first, then test your microphone here.', true);
+      return;
+    }
+    if (await state.session.startMic()) $('mic-hint').textContent = 'Talk now. The bar shows your voice. The white line is your threshold.';
+    refreshMicDevices();
+  });
+}
+
+function setupGifs() {
+  const pop = $('gif-pop');
+  const grid = $('gif-grid');
+  const note = $('gif-note');
+  let searchId = 0;
+  let timer = null;
+  const load = async (query) => {
+    const id = ++searchId;
+    note.textContent = 'Loading…';
+    note.hidden = false;
+    let gifs;
+    try {
+      gifs = await searchGifs(query);
+    } catch {
+      if (id === searchId) note.textContent = 'GIFs are unavailable right now. Try again later.';
+      return;
+    }
+    if (id !== searchId) return;
+    note.hidden = gifs.length > 0;
+    note.textContent = 'No GIFs found.';
+    grid.replaceChildren(
+      ...gifs.map((gif) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.setAttribute('aria-label', gif.title);
+        const img = document.createElement('img');
+        img.src = gif.preview;
+        img.alt = '';
+        img.loading = 'lazy';
+        b.append(img);
+        b.addEventListener('click', () => {
+          state.session?.sendGif(gif.url, gif.title);
+          toggle(false);
+        });
+        return b;
+      }),
+    );
+  };
+  const toggle = (open) => {
+    pop.hidden = !open;
+    $('gif-btn').setAttribute('aria-expanded', String(open));
+    if (open) {
+      $('gif-search').value = '';
+      load('');
+      $('gif-search').focus();
+    }
+  };
+  $('gif-btn').addEventListener('click', () => toggle(pop.hidden));
+  $('gif-search').addEventListener('input', (event) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => load(event.target.value), 350);
+  });
+  // The heart button starts the love animation for everyone in the room.
+  $('heart-btn').addEventListener('click', () => state.session?.sendChat('❤️'));
+  document.addEventListener('pointerdown', (event) => {
+    if (!pop.hidden && !pop.contains(event.target) && !$('gif-btn').contains(event.target)) toggle(false);
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && !pop.hidden) toggle(false);
+  });
+}
+
 function init() {
+  document.addEventListener('keydown', () => { document.documentElement.dataset.input = 'keyboard'; }, true);
+  document.addEventListener('pointerdown', () => { document.documentElement.dataset.input = 'pointer'; }, true);
   if (window.watchroom.platform === 'darwin') document.documentElement.classList.add('is-mac');
 
   mountFlapLine($('wordmark-a'), 5);
@@ -855,6 +1179,19 @@ function init() {
     if (event.key === 'Enter') onCreate();
   });
 
+  setupSettings();
+  setupGifs();
+  applyNuki();
+  setInterval(tickTogether, TOGETHER_TICK_S * 1000);
+  $('thinking-btn').addEventListener('click', () => {
+    if (!state.session?.sendThinking()) {
+      toast('Nobody else is in the room yet.');
+      return;
+    }
+    toast('Sent. They know you are thinking of them.');
+    $('thinking-btn').disabled = true;
+    setTimeout(() => ($('thinking-btn').disabled = false), 3000);
+  });
   $('mic-btn').addEventListener('click', onMicClick);
   $('share-btn').addEventListener('click', onShareClick);
   $('pause-btn').addEventListener('click', () => {
@@ -905,6 +1242,7 @@ function init() {
 
   document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && !$('picker').hidden) closePicker();
+    if (event.key === 'Escape' && !$('settings').hidden) closeSettings();
     if (event.key.toLowerCase() === 'm' && state.view === 'room' && !isTyping(event.target) && !event.metaKey && !event.ctrlKey) {
       onMicClick();
     }
