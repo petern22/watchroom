@@ -17,6 +17,7 @@ const MIN_VIDEO_BPS = 1e6;
 const AUDIO_BPS = 128e3;
 const REQUEST_KINDS = new Set(['pause', 'ready']);
 const REQUEST_GAP_MS = 3000;
+const MIC_HOLD_MS = 900;
 
 function clip(value, max) {
   return String(value ?? '').trim().slice(0, max);
@@ -381,7 +382,8 @@ export function openRoom(code, name, on, options = {}) {
       if (id !== 'me') level = Math.max(level, receiverLevel(id));
       const live = id === 'me' ? me.mic : who.mic;
       const on_ = id === 'me' ? micOpts.threshold : undefined;
-      const next = nextSpeaking({ level: live ? level : 0, speaking: who.speaking, loudAt: who.loudAt || 0, now: Date.now(), on: on_ });
+      // Your own microphone is checked faster and held open longer, so the start and end of a sentence are not cut off.
+      const next = nextSpeaking({ level: live ? level : 0, speaking: who.speaking, loudAt: who.loudAt || 0, now: Date.now(), on: on_, hold: id === 'me' ? MIC_HOLD_MS : undefined });
       who.loudAt = next.loudAt;
       // Voice mode: the microphone only carries sound while you are talking.
       if (id === 'me') applyMicGate(next.speaking);
@@ -389,7 +391,7 @@ export function openRoom(code, name, on, options = {}) {
         who.speaking = next.speaking;
         emitPeers();
       }
-    }, 140);
+    }, id === 'me' ? 40 : 140);
     meters.set(id, { timer, source });
   }
 

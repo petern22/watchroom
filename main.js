@@ -97,6 +97,8 @@ let lastHearts = 0;
 
 // Hearts over the whole desktop, on every screen: see-through, click-through windows that never take focus.
 function showHeartOverlays(kind = 'hearts') {
+  // Safety net: if anything ever hides the Dock icon, bring it back.
+  setTimeout(() => app.dock?.show(), 500);
   const now = Date.now();
   if (now - lastHearts < 3500) return;
   lastHearts = now;
@@ -115,7 +117,7 @@ function showHeartOverlays(kind = 'hearts') {
     });
     overlay.setIgnoreMouseEvents(true);
     overlay.setAlwaysOnTop(true, 'screen-saver');
-    overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     overlay.webContents.on('will-navigate', (event) => event.preventDefault());
     overlay.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     overlay.once('ready-to-show', () => overlay.showInactive());
@@ -163,7 +165,7 @@ function showAlertOverlays(title, text) {
     });
     card.setIgnoreMouseEvents(true);
     card.setAlwaysOnTop(true, 'screen-saver');
-    card.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    card.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     card.webContents.on('will-navigate', (event) => event.preventDefault());
     card.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     card.once('ready-to-show', () => card.showInactive());

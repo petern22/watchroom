@@ -52,4 +52,7 @@ assert.equal(cleanGifUrl('https://media.giphy.com/media/a.gif?track=1'), '');
 assert.equal(cleanGifUrl('https://media.giphy.com/media/../x.gif'), '');
 assert.equal(cleanGifUrl(5), '');
 
+assert.equal(nextSpeaking({ level: 0, speaking: true, loudAt: 1000, now: 1800, hold: 900 }).speaking, true, 'a longer hold keeps the mic open');
+assert.equal(nextSpeaking({ level: 0, speaking: true, loudAt: 1000, now: 2000, hold: 900 }).speaking, false);
+
 console.log('room policy ok');

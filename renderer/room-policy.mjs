@@ -35,10 +35,10 @@ export const levelFromSlider = (value) => Math.max(0.003, SLIDER_TOP_LEVEL * (Ma
 export const sliderFromLevel = (level) => Math.round(100 * Math.sqrt(Math.min(SLIDER_TOP_LEVEL, Math.max(0, level)) / SLIDER_TOP_LEVEL));
 
 // Returns the next state. `loudAt` is the time the voice was last above the on-level.
-export function nextSpeaking({ level, speaking, loudAt, now, on = SPEAK_ON_LEVEL }) {
+export function nextSpeaking({ level, speaking, loudAt, now, on = SPEAK_ON_LEVEL, hold = SPEAK_HOLD_MS }) {
   const off = on * (SPEAK_OFF_LEVEL / SPEAK_ON_LEVEL);
   if (level >= on || (speaking && level >= off)) return { speaking: true, loudAt: now };
-  if (speaking && now - loudAt < SPEAK_HOLD_MS) return { speaking: true, loudAt };
+  if (speaking && now - loudAt < hold) return { speaking: true, loudAt };
   return { speaking: false, loudAt };
 }
 
